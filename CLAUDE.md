@@ -1,8 +1,4 @@
-# CLAUDE.md
-
-Guidance for Claude Code when working in this repository.
-
-## What this is
+# What this is
 
 MongoDB schema-migration project for **Marketplace**, a multi-tenant marketplace platform — nothing
 here may presume what is sold, and there is no longer a catalogue at all; the old collection names
@@ -701,13 +697,12 @@ document against each other, not a reference.
 Never commit on `main` — branch first (`git switch -c <type>/<slug>`), and merging is the user's
 decision alone.
 
-⚠️ **Nothing has been pushed yet, and nothing may be until `setup/mongodb.js` is sanitised.** That
-file is tracked and carries bare database passwords rather than the `<MONGO_TEST_UDBOWNER>`-style
-placeholders its own newer section and `setup/redis.txt` use: a `userAdminAnyDatabase` password, the
-four `dbMarketplace{Dev,Test}` user passwords, and two connection strings for a **different project**
-(`uOwnerDbWetrade` / `uRwDbWetrade` against `rs0.gio.lan` and `mongovm.gio.lan`). The remote is public,
-so the first push publishes every one of them to anyone. Sanitise the file and rotate the passwords
-first; squashing history does not help, because the values are in the current tree.
+⚠️ **The remote is public and nothing has been pushed to it yet.** The history is a single commit by
+design: the two runbooks under `setup/` used to be tracked and carried live credentials, so they were
+untracked and the twenty commits that held earlier copies were collapsed into one. There is no second
+revision to leak from, and re-adding either file would undo the whole exercise — they are gitignored
+for that reason. Before the first push, read what a public reader would get: every migration, every
+validator and the `env` template are fine, and nothing else should be assumed to be.
 
 **Delete the local branch as soon as it is merged**: `git branch -d <slug>`, in the same breath as
 the merge, not at the top of the next task. Use `-d` and never `-D` — `-d` refuses a branch whose
