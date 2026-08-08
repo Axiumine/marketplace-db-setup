@@ -46,10 +46,12 @@
 import { test, beforeAll, afterAll, expect } from 'vitest';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
+import crypto from 'node:crypto';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
-import { Double, Int32, ObjectId, Decimal128 } from 'mongodb';
+import { Binary, Double, Int32, ObjectId, Decimal128 } from 'mongodb';
 import mm from 'migrate-mongo';
 
 const require = createRequire(import.meta.url);
@@ -177,6 +179,7 @@ if (!URL) {
 } else {
   let db;
   let client;
+  let keyDir;
   let counter = 0;
   const uid = () => String(counter++);
 
@@ -196,11 +199,33 @@ if (!URL) {
     db = conn.db;
     client = conn.client;
     await db.dropDatabase(); // clean slate
+
+    // ---- CSFLE (ADR-029) ---------------------------------------------------
+    //
+    // The four 20260808* migrations rewrite stored personal fields as ciphertext, and they need the
+    // 96-byte master key to do it — but only when they find a document to convert. Under `yarn test`
+    // that is never: the database was just dropped and is replayed empty. Under `yarn test:seed` it
+    // is the two demo seeds, and then the conversion runs for real, against a real key, exactly as
+    // it will against dev. Minting a throwaway key here rather than branching on `SEED_DEMO` keeps
+    // both invocations on one path, and makes the seeded run the thing that proves the conversion.
+    //
+    // ⚠️ Both variables are OVERWRITTEN, not defaulted, and that is a safety rule rather than
+    // tidiness. `.env` may well carry the real pair — dotenv has already loaded it — and honouring
+    // them would point a suite that calls `dropDatabase()` at the platform's own key vault and mint
+    // throwaway data keys into it.
+    keyDir = fs.mkdtempSync(path.join(os.tmpdir(), 'marketplace-csfle-test-'));
+    process.env.CSFLE_MASTER_KEY_PATH = path.join(keyDir, 'master.key');
+    fs.writeFileSync(process.env.CSFLE_MASTER_KEY_PATH, crypto.randomBytes(96), { mode: 0o600 });
+    // ⚠️ The vault goes INSIDE the test database so `dropDatabase` takes it along, and it has to: a
+    // fresh master key is minted on every run, and a data key left behind by the previous one is
+    // encrypted under a master key that no longer exists — every encrypt against it would fail.
+    process.env.CSFLE_KEY_VAULT_NAMESPACE = `${DB}.__keyVault`;
   });
 
   afterAll(async () => {
     if (db) await db.dropDatabase();
     if (client) await client.close();
+    if (keyDir) fs.rmSync(keyDir, { recursive: true, force: true });
   });
 
   const collNames = async () => (await db.listCollections().toArray()).map((c) => c.name);
@@ -220,23 +245,54 @@ if (!URL) {
   };
 
   // ---- helpers to build minimal VALID documents -----------------------------
-  const validAdmin = () => ({
-    _id: new ObjectId(),
-    login: { email: `a${uid()}@t.co`, password: 'x'.repeat(60) },
-    personalData: { firstName: 'A', lastName: 'B' },
-  });
+
+  /**
+   * Stored ciphertext, in the shape the four 20260808* migrations leave behind: BSON binData,
+   * subtype 6.
+   *
+   * The bytes are not a real CSFLE blob and do not need to be. Everything the fixtures below
+   * exercise happens server-side — `bsonType: 'binData'` accepts the value or refuses it, and a
+   * unique index treats two different byte strings as two different keys — and the server never
+   * looks inside subtype 6. Minting real ciphertext would make every fixture async, and every one of
+   * the sixty-odd `{ ...validCompany(), … }` call sites below with it, for a property no assertion
+   * here reads. The real round-trip is the last test in this file, against a real key.
+   *
+   * ⚠️ A value built here must NOT be in the collection when a `*-encrypted` migration's `down()`
+   * runs: `decryptStored` selects on subtype 6 and would hand these bytes to libmongocrypt, which
+   * refuses them. The two down-ladder tests below therefore plant their document *after* those four
+   * steps, in plaintext, under the validator they have just restored — which is also the more
+   * faithful thing for a test of a pre-encryption migration to do.
+   */
+  const cipher = () => new Binary(Buffer.from(`ciphertext-${uid()}`), Binary.SUBTYPE_ENCRYPTED);
+
+  const validAdmin = ({ encrypted = true } = {}) => {
+    const n = uid();
+    const text = (value) => (encrypted ? cipher() : value);
+    return {
+      _id: new ObjectId(),
+      // Both names and the login address are ciphertext since 20260808000000. `password` is not: a
+      // bcrypt hash is not personal data, and it is compared by the application, never by a query.
+      login: { email: text(`a${n}@t.co`), password: 'x'.repeat(60) },
+      personalData: { firstName: text('Op'), lastName: text('Erator') },
+    };
+  };
 
   // `published: false` is in here rather than at the call sites because 20260804010000 put it in
   // `required` — a fixture without it stopped being a valid company, and every one of the two dozen
   // `accepts('company', …)` assertions below would have started failing for a reason that has
   // nothing to do with what each of them is testing.
-  const validCompany = () => {
+  const validCompany = ({ encrypted = true } = {}) => {
     const n = uid();
+    const text = (value) => (encrypted ? cipher() : value);
     return {
       _id: new ObjectId(),
       idShopOwner: new ObjectId(),
-      legalName: 'R', vatNumber: n.padStart(11, '0'), contactPerson: 'R',
-      administrator: 'A', certifiedEmail: `certified${n}@example.com`, registryExtract: 'v.pdf',
+      // ⚠️ `contactPerson` and `administrator` are the only two encrypted here, and the other
+      // fourteen are in the clear on purpose: a company is a legal entity, and its VAT number,
+      // certified email and registry extract are a matter of public record. These two are the names
+      // of two people. See the head of 20260808000200-alter-company-encrypted.js.
+      legalName: 'R', vatNumber: n.padStart(11, '0'), contactPerson: text('Contact P'),
+      administrator: text('Admin A'), certifiedEmail: `certified${n}@example.com`, registryExtract: 'v.pdf',
       address: {
         street: 'Via', postalCode: '24030', city: 'C', province: 'BG',
         // GeoJSON order, [lng, lat], and doubles — the shape every collection with an address
@@ -266,16 +322,31 @@ if (!URL) {
     };
   };
 
-  const validShopOwner = (emailVerify) => {
+  /**
+   * `encrypted: false` builds the same document in PLAINTEXT.
+   *
+   * It exists for the tests that pop the 20260808* migrations off before planting anything: under
+   * the restored validator the encrypted form is a rejected write, and under the resting validator
+   * the plaintext form is. There is no document that satisfies both, which is the honest shape of a
+   * migration that changes a field's TYPE rather than adding or removing one.
+   */
+  const validShopOwner = (emailVerify, { encrypted = true } = {}) => {
     const n = uid();
+    const text = (value) => (encrypted ? cipher() : value);
     const doc = {
       _id: new ObjectId(),
-      login: { email: `i${n}@t.co`, password: 'x'.repeat(60) },
+      login: { email: text(`i${n}@t.co`), password: 'x'.repeat(60) },
       personalData: {
+        // ⚠️ `firstName`, `lastName` and `address.city` stay in the CLEAR, and are the only personal
+        // fields on this collection that do. They are the sort keys of tbl_active_lastName_firstName,
+        // tbl_active_firstName and tbl_active_city and the targets of the operator table's `/^term/i`
+        // prefix search, and no CSFLE algorithm preserves an ordering or a prefix — deterministic
+        // preserves equality and nothing else. Encrypting them would not slow the operator table
+        // down, it would silently falsify it. See 20260808000100-alter-shopOwner-encrypted.js.
         firstName: 'M', lastName: 'R',
-        birth: { date: new Date('1970-11-24T00:00:00Z') },
-        address: { street: 'Via', postalCode: '24030', city: 'C', province: 'BG' },
-        contacts: { mobile: '333', email: `c${n}@t.co` },
+        birth: { date: text(new Date('1970-11-24T00:00:00Z')) },
+        address: { street: text('Via'), postalCode: text('24030'), city: 'C', province: text('BG') },
+        contacts: { mobile: text('333'), email: text(`c${n}@t.co`) },
       },
       registeredAt: new Date(),
     };
@@ -441,10 +512,13 @@ if (!URL) {
     }));
     // post-enableEmailAccess: `valid` alone, the other three unset
     await accepts('shopOwner', validShopOwner({ valid: true }));
-    // mid email-change: everything at once
+    // mid email-change: everything at once. `hash` is a comparison token the flow generates and is
+    // not personal data, so it stays a string; `newEmailTmp` is an address the customer typed and is
+    // ciphertext since 20260808000100 — deterministic ciphertext, because koa-utils finds the
+    // account by it.
     await accepts('shopOwner', validShopOwner({
       valid: true, hash: 'y'.repeat(50), requestTimes: new Int32(4),
-      dateLastReq: new Date(), newEmailTmp: 'fresh@t.co',
+      dateLastReq: new Date(), newEmailTmp: cipher(),
     }));
   });
 
@@ -461,16 +535,32 @@ if (!URL) {
     // wrong types on the remaining members
     await rejects('shopOwner', validShopOwner({ valid: 'true' }));
     await rejects('shopOwner', validShopOwner({ dateLastReq: '2026-07-20' }));
+    // `newEmailTmp` was a string capped at 250 until 20260808000100 turned it into ciphertext. The
+    // cap went with the plaintext — a field-level rule cannot survive encryption, because the server
+    // sees a byte string and nothing else — so what is left to enforce is the TYPE, and a string is
+    // now the wrong one at any length. The 250 bound is re-asserted under the restored validator in
+    // the encrypted-down test at the foot of this file.
+    await rejects('shopOwner', validShopOwner({ newEmailTmp: 'fresh@t.co' }));
     await rejects('shopOwner', validShopOwner({ newEmailTmp: 'n'.repeat(251) }));
+    await accepts('shopOwner', validShopOwner({ newEmailTmp: cipher() }));
   });
 
   test('emailVerify down strips the field and restores the narrower validator', async () => {
-    const kept = validShopOwner({ valid: true, hash: 'z'.repeat(50) });
-    await db.collection('shopOwner').insertOne(kept);
-
     // Every migration that sorts above this one has to come off first — `down` reverts the most
     // recently applied migration. Every migration added after this one has to extend this list and
     // the count below.
+    await mm.down(db, client); // 20260808000300-alter-user-encrypted
+    await mm.down(db, client); // 20260808000200-alter-company-encrypted
+    await mm.down(db, client); // 20260808000100-alter-shopOwner-encrypted
+    await mm.down(db, client); // 20260808000000-alter-admin-encrypted
+
+    // ⚠️ Planted HERE and not before the four steps above, and in plaintext. `shopOwner` is back on
+    // its pre-encryption validator now, which refuses a binData `login.email`; planting the
+    // encrypted form first would also have handed `decryptStored` a fixture blob it cannot decrypt.
+    // Nothing between here and 20260726000000 touches this document.
+    const kept = validShopOwner({ valid: true, hash: 'z'.repeat(50) }, { encrypted: false });
+    await db.collection('shopOwner').insertOne(kept);
+
     await mm.down(db, client); // 20260804050000-index-item-listing-sort
     await mm.down(db, client); // 20260804040000-index-company-public-read
     await mm.down(db, client); // 20260804030000-create-item
@@ -483,7 +573,7 @@ if (!URL) {
     await mm.down(db, client); // 20260802000100-index-shopOwner-registeredAt
     await mm.down(db, client); // 20260801000100-index-shopOwner-tbl
     await mm.down(db, client); // 20260726000000-alter-shopOwner-emailVerify
-    const popped = 12;
+    const popped = 16;
 
     const { $jsonSchema } = (await collInfo('shopOwner')).options.validator;
     assert.equal($jsonSchema.properties.emailVerify, undefined, 'emailVerify removed from validator');
@@ -517,71 +607,86 @@ if (!URL) {
     assert.equal($jsonSchema.properties.emailVerify.properties.hash.maxLength, 50, 'the emailVerify alter survives');
     assert.equal($jsonSchema.properties.emailVerify.required, undefined, 'emailVerify still requires no member');
     assert.deepEqual($jsonSchema.properties.resetPwd.required, ['resetDateReq', 'resetHash'], 'resetPwd intact');
-    // `personalData.address`, whose own `street` is the 250-bounded one. Both of these named
-    // `properties.street` at the outer level until now, which is the wrong level: the assertion threw
-    // on `undefined` rather than failing, so it read as one broken test rather than as a rule nobody
-    // was checking.
-    assert.equal($jsonSchema.properties.personalData.properties.address.properties.street.maxLength, 250,
-      "the shopOwner street bound (250, not company's 100) survives");
 
     const address = $jsonSchema.properties.personalData.properties.address;
+    // What this migration ADDED to the address block is `position`, and what it did NOT do is make
+    // it required — the collection was already populated and a coordinate cannot be derived from a
+    // stored street without geocoding it. That claim is independent of the field's type and is the
+    // one worth pinning here.
     assert.deepEqual(address.required, ['street', 'postalCode', 'city', 'province'], 'position is NOT required');
-    // Same tuple form as company.
-    assertGeoJsonTuple(address.properties.position.properties.coordinates);
+
+    // ⚠️ The street bound of 250 and the tuple-form coordinate schema are gone from the RESTING
+    // validator: 20260808000100 encrypts `street` and `position`, and a field-level rule cannot
+    // survive encryption — the server is handed a byte string and has nothing left to measure. Both
+    // are re-asserted against the restored plaintext validator in the encrypted-down test at the
+    // foot of this file, which is the only state in which they still mean anything.
+    assert.equal(address.properties.street.bsonType, 'binData', 'the street is ciphertext at rest');
+    assert.equal(address.properties.position.bsonType, 'binData', 'and so is the point');
+    // `city` is the exception, and stays a bounded string: tbl_active_city sorts on it.
+    assert.equal(address.properties.city.maxLength, 100, 'city stays a plain bounded string — tbl_active_city sorts on it');
 
     // Top level, not inside personalData: `personalData` is what the shopOwner declared about
-    // themselves, the note is what an operator wrote about them.
-    assert.equal($jsonSchema.properties.notes.bsonType, 'string', 'note added as a string');
-    assert.equal($jsonSchema.properties.notes.maxLength, 2000, 'note capped at 2000');
+    // themselves, the note is what an operator wrote about them. Encrypted at rest, and required in
+    // neither state — the placement claim is what this migration is on the hook for.
+    assert.equal($jsonSchema.properties.notes.bsonType, 'binData', 'the operator note is ciphertext at rest');
     assert.equal($jsonSchema.required.includes('notes'), false, 'note is not required');
     assert.equal($jsonSchema.properties.personalData.properties.notes, undefined, 'note is not under personalData');
   });
 
-  test('shopOwner takes the address point as optional, in GeoJSON order, as a double', async () => {
-    const withPosition = (coordinates) => {
+  test('the shopOwner address point stays optional, and is opaque at rest', async () => {
+    // Absent is valid, and that is the assertion this migration rests on: every shopOwner written
+    // before it is shaped exactly like this one, and a required point would have made all of them
+    // unwritable on their next update.
+    await accepts('shopOwner', validShopOwner());
+
+    const withPosition = (position) => {
       const doc = validShopOwner();
-      doc.personalData.address.position = { type: 'Point', coordinates };
+      doc.personalData.address.position = position;
       return doc;
     };
+    await accepts('shopOwner', withPosition(cipher()));
 
-    // Absent is valid, and that is the assertion the whole migration rests on: every shopOwner in
-    // the collection is shaped exactly like this one.
-    await accepts('shopOwner', validShopOwner());
-    await accepts('shopOwner', withPosition([new Double(9.6), new Double(45.6)]));
-    // A whole-degree coordinate arrives as an int32 — `int` is in the bsonType list for that reason.
-    await accepts('shopOwner', withPosition([9, 45]));
-
-    // 120 is impossible as a latitude, so this is the pair written the wrong way round. No validator
-    // can catch a transposition inside the legal range, but this one is out of it.
-    await rejects('shopOwner', withPosition([new Double(9.6), new Double(120)]));
-    // Decimal128 is a rejected write, deliberately: `{ type: [Number] }` in the model can never
-    // produce one, and GraphQLFloat.serialize throws on it after a `.lean()` read.
-    await rejects('shopOwner', withPosition([Decimal128.fromString('9.6'), Decimal128.fromString('45.6')]));
-    await rejects('shopOwner', withPosition([new Double(9.6)]));
-
-    const withoutType = validShopOwner();
-    withoutType.personalData.address.position = { coordinates: [new Double(9.6), new Double(45.6)] };
-    await rejects('shopOwner', withoutType);
+    // ⚠️ 20260808000100 encrypts the point WHOLE — one blob, not a `type` beside an encrypted
+    // `coordinates` — so the GeoJSON document is itself a rejected write now, per-axis bounds and
+    // all. That was affordable here and only here: nothing queries a shop owner by distance and no
+    // 2dsphere index was ever built over this field. `company.address.position` backs the map and
+    // `companiesNearby`, so it stays in the clear and keeps every rule asserted below.
+    await rejects('shopOwner', withPosition({ type: 'Point', coordinates: [new Double(9.6), new Double(45.6)] }));
+    // The full GeoJSON matrix — axis order, per-axis bounds, int, no Decimal128 — is asserted against
+    // the restored plaintext validator in the encrypted-down test at the foot of this file.
   });
 
-  test('shopOwner takes the operator note as an optional string of at most 2000', async () => {
+  test('the shopOwner operator note stays optional, and is opaque at rest', async () => {
     const withNotes = (notes) => ({ ...validShopOwner(), notes });
 
-    await accepts('shopOwner', withNotes('Call back in September'));
-    await accepts('shopOwner', withNotes('N'.repeat(2000)));
-    await rejects('shopOwner', withNotes('N'.repeat(2001)));
-    // bsonType string under additionalProperties:false — a number is refused, not coerced.
+    await accepts('shopOwner', withNotes(cipher()));
+    // Optional in both states: nothing obliges an operator to have written anything about an account.
+    await accepts('shopOwner', validShopOwner());
+    // The 2000-character cap went with the plaintext and is re-asserted under the restored validator
+    // below. What survives here is the type — and under `additionalProperties: false` a value of the
+    // wrong type is refused rather than coerced, whether it is a string or a number.
+    await rejects('shopOwner', withNotes('Call back in September'));
     await rejects('shopOwner', withNotes(7));
   });
 
   test('the shopOwner alter down strips both fields and restores the previous validator', async () => {
-    const annotated = validShopOwner();
+    // No longer the newest migration — the four encrypted alters, `user`, company and its seed all
+    // sort above it and come off first.
+    await mm.down(db, client); // 20260808000300-alter-user-encrypted
+    await mm.down(db, client); // 20260808000200-alter-company-encrypted
+    await mm.down(db, client); // 20260808000100-alter-shopOwner-encrypted
+    await mm.down(db, client); // 20260808000000-alter-admin-encrypted
+
+    // Planted after the encrypted alters come off, for the reason spelled out in the emailVerify
+    // down-test above: plaintext is what the restored validator takes. That goes for the two fields
+    // this migration added as well — 20260808000100 encrypts both `notes` and `address.position`, so
+    // the plaintext note and the GeoJSON point below are writable only in the state this ladder has
+    // just restored, which is the state this test is about.
+    const annotated = validShopOwner(undefined, { encrypted: false });
     annotated.notes = 'Operator note';
     annotated.personalData.address.position = { type: 'Point', coordinates: [new Double(9.6), new Double(45.6)] };
     await db.collection('shopOwner').insertOne(annotated);
 
-    // No longer the newest migration — `user`, company and its seed sort above it and come off
-    // first. None of the three touches `shopOwner`, so the document planted above is unaffected.
     await mm.down(db, client); // 20260804050000-index-item-listing-sort
     await mm.down(db, client); // 20260804040000-index-company-public-read
     await mm.down(db, client); // 20260804030000-create-item
@@ -607,8 +712,8 @@ if (!URL) {
 
     await db.collection('shopOwner').deleteOne({ _id: annotated._id });
     const applied = await mm.up(db, client);
-    assert.equal(applied.length, 9,
-      'the shopOwner alter, the company creation, its seed, the user creation, the three catalogue migrations and the two index migrations re-applied');
+    assert.equal(applied.length, 13,
+      'the shopOwner alter, the company creation, its seed, the user creation, the three catalogue migrations, the two index migrations and the four encrypted alters re-applied');
   });
 
   // ---- 20260803000000-create-company -----------------------------------------
@@ -638,8 +743,12 @@ if (!URL) {
     assert.equal($jsonSchema.properties.legalName.maxLength, 100, 'legalName bound');
     assert.equal($jsonSchema.properties.vatNumber.minLength, 11, 'vatNumber lower bound');
     assert.equal($jsonSchema.properties.vatNumber.maxLength, 11, 'vatNumber upper bound');
-    assert.equal($jsonSchema.properties.contactPerson.maxLength, 50, 'contactPerson bound');
-    assert.equal($jsonSchema.properties.administrator.maxLength, 50, 'administrator bound');
+    // ⚠️ The 50-character bounds on the two natural persons went with their plaintext in
+    // 20260808000200 and are re-asserted under the restored validator at the foot of this file. That
+    // migration touched exactly these two of the sixteen fields: everything else on a company
+    // identifies a legal entity or is published to anonymous visitors.
+    assert.equal($jsonSchema.properties.contactPerson.bsonType, 'binData', 'contactPerson is ciphertext at rest');
+    assert.equal($jsonSchema.properties.administrator.bsonType, 'binData', 'administrator is ciphertext at rest');
     assert.equal($jsonSchema.properties.uniqueCode.minLength, 7, 'uniqueCode lower bound');
     assert.equal($jsonSchema.properties.uniqueCode.maxLength, 7, 'uniqueCode upper bound');
     assert.equal($jsonSchema.properties.certifiedEmail.maxLength, 250, 'certifiedEmail bound');
@@ -697,8 +806,10 @@ if (!URL) {
     await rejects('company', { ...validCompany(), registryExtract: 'v'.repeat(1001) });
 
     await rejects('company', { ...validCompany(), legalName: 'R'.repeat(101) });
-    await rejects('company', { ...validCompany(), contactPerson: 'R'.repeat(51) });
-    await rejects('company', { ...validCompany(), administrator: 'A'.repeat(51) });
+    // The two natural persons are ciphertext at rest, so a plain string is refused at any length —
+    // their 50-character bounds are re-asserted under the restored validator at the foot of the file.
+    await rejects('company', { ...validCompany(), contactPerson: 'R' });
+    await rejects('company', { ...validCompany(), administrator: 'A' });
     await rejects('company', { ...validCompany(), certifiedEmail: `${'p'.repeat(245)}@mail.example` });
     // bsonType string under additionalProperties:false — a number is refused, not coerced.
     await rejects('company', { ...validCompany(), legalName: 7 });
@@ -1112,10 +1223,15 @@ if (!URL) {
     const before = await COUNT_COMPANY();
     assert.equal(before, SEEDED ? 1 : 0, 'the seeded state going in');
 
-    // No longer the newest migration: four sort above it and come off first. Three of them drop
-    // collections this test never looks at; the fourth, `alter-company-public`, `$unset`s four fields
-    // from every company but removes none, so the count below still reads exactly what the seed
-    // did or did not write.
+    // No longer the newest migration: ten sort above it and come off first. Three of them drop
+    // collections this test never looks at; `alter-company-public` `$unset`s four fields from every
+    // company but removes none; the four `*-encrypted` steps rewrite fields in place. None of them
+    // inserts or deletes a company, so the count below still reads exactly what the seed did or did
+    // not write.
+    await mm.down(db, client); // 20260808000300-alter-user-encrypted
+    await mm.down(db, client); // 20260808000200-alter-company-encrypted
+    await mm.down(db, client); // 20260808000100-alter-shopOwner-encrypted
+    await mm.down(db, client); // 20260808000000-alter-admin-encrypted
     await mm.down(db, client); // 20260804050000-index-item-listing-sort
     await mm.down(db, client); // 20260804040000-index-company-public-read
     await mm.down(db, client); // 20260804030000-create-item
@@ -1126,8 +1242,8 @@ if (!URL) {
     assert.equal(await COUNT_COMPANY(), 0, 'down leaves company empty');
 
     const applied = await mm.up(db, client);
-    assert.equal(applied.length, 7,
-      'the seed, the user creation, the three catalogue migrations and the two index migrations re-applied');
+    assert.equal(applied.length, 11,
+      'the seed, the user creation, the three catalogue migrations, the two index migrations and the four encrypted alters re-applied');
     assert.equal(await COUNT_COMPANY(), before, 'up restores exactly the state it removed');
   });
 
@@ -1225,6 +1341,10 @@ if (!URL) {
   test('the table indexes drop on down, and down converges from a partial state', async () => {
     // Everything listed below sorts newer than the tbl indexes and has to come off before they are
     // the head.
+    await mm.down(db, client); // 20260808000300-alter-user-encrypted
+    await mm.down(db, client); // 20260808000200-alter-company-encrypted
+    await mm.down(db, client); // 20260808000100-alter-shopOwner-encrypted
+    await mm.down(db, client); // 20260808000000-alter-admin-encrypted
     await mm.down(db, client); // 20260804050000-index-item-listing-sort
     await mm.down(db, client); // 20260804040000-index-company-public-read
     await mm.down(db, client); // 20260804030000-create-item
@@ -1251,6 +1371,10 @@ if (!URL) {
     // missing index, so an unguarded loop would fail here — which is exactly the state a partially
     // applied `up` leaves behind. Reverting has to converge from it rather than wedge the database.
     await mm.up(db, client);
+    await mm.down(db, client); // 20260808000300-alter-user-encrypted
+    await mm.down(db, client); // 20260808000200-alter-company-encrypted
+    await mm.down(db, client); // 20260808000100-alter-shopOwner-encrypted
+    await mm.down(db, client); // 20260808000000-alter-admin-encrypted
     await mm.down(db, client); // 20260804050000-index-item-listing-sort
     await mm.down(db, client); // 20260804040000-index-company-public-read
     await mm.down(db, client); // 20260804030000-create-item
@@ -1268,8 +1392,8 @@ if (!URL) {
     assert.equal(after.some((n) => n.startsWith('tbl_active_')), false, 'revert converges from a partial state');
 
     const applied = await mm.up(db, client);
-    assert.equal(applied.length, 11,
-      'the tbl indexes, the registeredAt index, the shopOwner alter, the company creation, its seed, the user creation, the three catalogue migrations and the two index migrations re-applied');
+    assert.equal(applied.length, 15,
+      'the tbl indexes, the registeredAt index, the shopOwner alter, the company creation, its seed, the user creation, the three catalogue migrations, the two index migrations and the four encrypted alters re-applied');
   });
 
   test('up is idempotent for indexes that already exist', async () => {
@@ -1285,6 +1409,311 @@ if (!URL) {
 
     const names = (await db.collection('shopOwner').indexes()).filter((i) => i.name.startsWith('tbl_active_'));
     assert.equal(names.length, 4, 'no duplicate indexes after a second up');
+  });
+
+  // ---- 20260808000000 / 000100 / 000200 / 000300 — the four encrypted alters ----
+  //
+  // ADR-029. Explicit CSFLE: MongoDB Community supports neither automatic encryption nor Queryable
+  // Encryption, so a value is encrypted by the application before it is written and decrypted after
+  // it is read, and the server only ever sees `binData` subtype 6.
+  //
+  // ⚠️ These four are the only migrations here whose `up` is validator-first and data-second, the
+  // reverse of every other alter in this directory. The usual order exists because a `$unset` has to
+  // run before a validator that forbids the field. These forbid nothing — they make a field's OLD
+  // type illegal — so the writes that convert it have to land under the NEW validator or be refused
+  // one at a time. `down` is the same argument mirrored, and is validator-first too.
+  //
+  // ⚠️ A field-level rule cannot survive encryption. `maxLength`, `minLength`, `pattern` and the
+  // per-axis coordinate bounds all describe a value the server can read, and past this migration it
+  // reads a byte string. Every one of them is asserted below against the RESTORED validator, which
+  // is the only state in which they still mean anything — losing that would leave those rules
+  // written down in `lib/schemas/` and checked nowhere.
+
+  test('the encrypted alters convert the personal fields, and only those', async () => {
+    // The census: what this platform treats as personal data, in one place, per collection. A field
+    // that arrives later and belongs on the left must be added to a migration, not to this list.
+    const CIPHERTEXT = {
+      admin: ['login.email', 'personalData.firstName', 'personalData.lastName'],
+      shopOwner: [
+        'login.email', 'notes', 'emailVerify.newEmailTmp',
+        'personalData.birth.date', 'personalData.address.street', 'personalData.address.postalCode',
+        'personalData.address.province', 'personalData.address.position',
+        'personalData.contacts.mobile', 'personalData.contacts.landline', 'personalData.contacts.email',
+      ],
+      company: ['contactPerson', 'administrator'],
+      user: [
+        'login.email', 'emailVerify.newEmailTmp',
+        'personalData.firstName', 'personalData.lastName', 'personalData.birth.date',
+        'personalData.contacts.mobile', 'personalData.contacts.landline', 'personalData.contacts.email',
+      ],
+    };
+
+    // The other half, and the half worth arguing. Every entry here is a field somebody could
+    // reasonably expect to be encrypted and which deliberately is not.
+    const CLEARTEXT = {
+      // A bcrypt hash is not personal data and is never a query filter — the application compares it.
+      // Encrypting it would buy nothing and cost the login path a decrypt.
+      admin: ['login.password', 'resetPwd.resetHash'],
+      // ⚠️ The three sort keys of the operator table. `tbl_active_lastName_firstName`,
+      // `tbl_active_firstName` and `tbl_active_city` sort on them and the table's search matches
+      // `/^term/i` against them. Deterministic CSFLE preserves equality and NOTHING else — no
+      // ordering, no prefix — so encrypting these would not slow the table down, it would silently
+      // return the wrong rows in the wrong order.
+      shopOwner: ['personalData.firstName', 'personalData.lastName', 'personalData.address.city',
+        'login.password', 'resetPwd.resetHash', 'emailVerify.hash', 'registeredAt'],
+      // A company is a legal entity and these identify it publicly. `address` in particular backs
+      // `address.position_2dsphere`, `published_city_publicName` and the storefront map.
+      company: ['legalName', 'vatNumber', 'taxCode', 'uniqueCode', 'certifiedEmail', 'registryExtract',
+        'publicName', 'slug', 'description', 'address.street', 'address.city', 'address.position'],
+      // ⚠️ `defaultAddress` and every `addresses._id` MUST stay clear: the second half of this
+      // collection's validator `$map`s the element ids and checks `defaultAddress` is `$in` them.
+      // Random ciphertext differs on every encryption, so encrypting either side would make that
+      // match nothing and refuse every write to the collection. A server-minted ObjectId is not
+      // personal data on its own, so nothing is given up.
+      user: ['defaultAddress', 'login.password', 'resetPwd.resetHash', 'emailVerify.hash'],
+    };
+
+    const nodeAt = ($jsonSchema, dotted) =>
+      dotted.split('.').reduce((node, segment) => node.properties[segment], $jsonSchema);
+
+    for (const [collection, paths] of Object.entries(CIPHERTEXT)) {
+      const $jsonSchema = jsonSchemaOf((await collInfo(collection)).options.validator);
+      for (const p of paths) {
+        assert.equal(nodeAt($jsonSchema, p).bsonType, 'binData', `${collection}.${p} must be ciphertext`);
+      }
+      for (const p of CLEARTEXT[collection]) {
+        assert.notEqual(nodeAt($jsonSchema, p).bsonType, 'binData', `${collection}.${p} must stay in the clear`);
+      }
+    }
+
+    // `user.addresses` is the one encrypted block behind an array, and the element schema is reached
+    // through `items` rather than `properties` — which is also why `20260808000300` converts no
+    // stored data: the walker in lib/encryption.js deliberately does not cross an array.
+    const userSchema = jsonSchemaOf((await collInfo('user')).options.validator);
+    const element = userSchema.properties.addresses.items;
+    for (const member of ['label', 'street', 'postalCode', 'city', 'province', 'position']) {
+      assert.equal(element.properties[member].bsonType, 'binData', `user.addresses[].${member} must be ciphertext`);
+    }
+    assert.equal(element.properties._id.bsonType, 'objectId', 'the address id must stay an objectId');
+
+    // The catalogue holds no personal data at all, so neither migration touched it. Asserted rather
+    // than left implicit: an `item` is domain-neutral by ADR-008 and a personal field arriving in one
+    // would be a design mistake before it was an encryption one.
+    for (const collection of ['item', 'itemCategory']) {
+      const { properties } = jsonSchemaOf((await collInfo(collection)).options.validator);
+      const encrypted = Object.entries(properties).filter(([, shape]) => shape.bsonType === 'binData');
+      assert.deepEqual(encrypted, [], `${collection} carries no personal data and must have no ciphertext`);
+    }
+  });
+
+  test('the encrypted downs restore the plaintext validators, rules included', async () => {
+    await mm.down(db, client); // 20260808000300-alter-user-encrypted
+    await mm.down(db, client); // 20260808000200-alter-company-encrypted
+    await mm.down(db, client); // 20260808000100-alter-shopOwner-encrypted
+    await mm.down(db, client); // 20260808000000-alter-admin-encrypted
+
+    const shopOwner = jsonSchemaOf((await collInfo('shopOwner')).options.validator);
+    const address = shopOwner.properties.personalData.properties.address;
+    assert.equal(address.properties.street.maxLength, 250, "the shopOwner street bound (250, not company's 100)");
+    assert.equal(address.properties.postalCode.minLength, 5, 'postal code lower bound');
+    assert.equal(address.properties.postalCode.maxLength, 5, 'postal code upper bound');
+    assert.equal(address.properties.province.minLength, 2, 'province lower bound');
+    assert.equal(address.properties.province.maxLength, 2, 'province upper bound');
+    // The point comes back as the tuple form, per-axis bounds and all — the same one `company`
+    // carries in every state, which is what makes the two collections one claim.
+    assertGeoJsonTuple(address.properties.position.properties.coordinates);
+    assert.equal(shopOwner.properties.personalData.properties.birth.properties.date.bsonType, 'date',
+      'a date of birth is a date again');
+    assert.equal(shopOwner.properties.personalData.properties.contacts.properties.mobile.maxLength, 12, 'mobile bound');
+    assert.equal(shopOwner.properties.notes.maxLength, 2000, 'the operator note is capped at 2000 again');
+    assert.equal(shopOwner.properties.emailVerify.properties.newEmailTmp.maxLength, 250, 'newEmailTmp bound');
+    assert.equal(shopOwner.properties.login.properties.email.maxLength, 250, 'the login address bound');
+
+    const admin = jsonSchemaOf((await collInfo('admin')).options.validator);
+    assert.equal(admin.properties.personalData.properties.firstName.maxLength, 100, 'admin given-name bound');
+    assert.equal(admin.properties.personalData.properties.lastName.maxLength, 100, 'admin family-name bound');
+
+    const company = jsonSchemaOf((await collInfo('company')).options.validator);
+    assert.equal(company.properties.contactPerson.maxLength, 50, 'contactPerson bound');
+    assert.equal(company.properties.administrator.maxLength, 50, 'administrator bound');
+    // ⚠️ Both `down`s restate the whole validator, and `company`'s is the `$and` pair. Passing the
+    // schema half alone would silently drop the publish rule — asserted here because nothing else
+    // between this line and a shop going live without a URL would notice.
+    assert.ok(Array.isArray((await collInfo('company')).options.validator.$and), 'company keeps its $and pair');
+    assert.ok(Array.isArray((await collInfo('user')).options.validator.$and), 'user keeps its $and pair');
+
+    const element = jsonSchemaOf((await collInfo('user')).options.validator).properties.addresses.items;
+    assert.equal(element.properties.label.maxLength, 50, 'the address label bound');
+    assertGeoJsonTuple(element.properties.position.properties.coordinates);
+
+    // And the writes each state accepts are exactly swapped: plaintext in, ciphertext out.
+    await accepts('shopOwner', validShopOwner(undefined, { encrypted: false }));
+    await rejects('shopOwner', validShopOwner());
+
+    assert.equal((await mm.up(db, client)).length, 4, 'the four encrypted alters re-applied');
+  });
+
+  test('the conversion round-trips a stored document, and touches nothing outside the plan', async () => {
+    // ⚠️ The one test in this repo that runs a real `ClientEncryption` against a real 96-byte key —
+    // see the CSFLE block in `beforeAll`. Everything else here uses the opaque `cipher()` fixture,
+    // which the server cannot tell from the real thing but libmongocrypt can.
+    //
+    // Down to the plaintext validators, plant one shop owner, up again: `encryptStored` is the only
+    // thing standing between the two states, so whatever changed is what it did — and whatever did
+    // not change is what it left alone, which is the half a validator assertion cannot make.
+    await mm.down(db, client); // 20260808000300-alter-user-encrypted
+    await mm.down(db, client); // 20260808000200-alter-company-encrypted
+    await mm.down(db, client); // 20260808000100-alter-shopOwner-encrypted
+    await mm.down(db, client); // 20260808000000-alter-admin-encrypted
+
+    const plain = validShopOwner({ valid: true, hash: 'z'.repeat(50), newEmailTmp: 'moved@t.co' }, { encrypted: false });
+    plain.notes = 'Operator note';
+    plain.personalData.address.position = { type: 'Point', coordinates: [new Double(9.6), new Double(45.6)] };
+    plain.personalData.contacts.landline = '035';
+    await db.collection('shopOwner').insertOne(plain);
+
+    // One document per converting collection, because each carries its OWN field list and its own
+    // data key: a plan that named the wrong collection or the wrong key would still convert a shop
+    // owner correctly and leave the other two silently untouched.
+    const plainAdmin = validAdmin({ encrypted: false });
+    const plainCompany = validCompany({ encrypted: false });
+    await db.collection('admin').insertOne(plainAdmin);
+    await db.collection('company').insertOne(plainCompany);
+
+    assert.equal((await mm.up(db, client)).length, 4, 'the four encrypted alters re-applied');
+
+    const stored = await db.collection('shopOwner').findOne({ _id: plain._id });
+    const at = (document, dotted) => dotted.split('.').reduce((node, segment) => node[segment], document);
+    const isCiphertext = (value) => value instanceof Binary && value.sub_type === Binary.SUBTYPE_ENCRYPTED;
+
+    // Every one of the eleven planned paths is subtype 6 now, whatever it was before — a string, a
+    // Date, or the whole GeoJSON object.
+    for (const p of ['login.email', 'notes', 'emailVerify.newEmailTmp', 'personalData.birth.date',
+      'personalData.address.street', 'personalData.address.postalCode', 'personalData.address.province',
+      'personalData.address.position', 'personalData.contacts.mobile', 'personalData.contacts.landline',
+      'personalData.contacts.email']) {
+      const value = at(stored, p);
+      assert.ok(value instanceof Binary, `${p} is binData`);
+      assert.equal(value.sub_type, Binary.SUBTYPE_ENCRYPTED, `${p} is subtype 6`);
+    }
+
+    // And nothing outside the plan moved. The three sort keys above all: a conversion that took them
+    // would leave the operator table sorting on ciphertext, which fails silently rather than loudly.
+    assert.equal(stored.personalData.firstName, 'M', 'the given name is untouched');
+    assert.equal(stored.personalData.lastName, 'R', 'the family name is untouched');
+    assert.equal(stored.personalData.address.city, 'C', 'the city is untouched');
+    assert.equal(stored.login.password, plain.login.password, 'the bcrypt hash is untouched');
+    assert.equal(stored.emailVerify.hash, 'z'.repeat(50), 'the verification token is untouched');
+    assert.deepEqual(stored.registeredAt, plain.registeredAt, 'the registration instant is untouched');
+
+    // The operator: both names as well as the login address, because nothing sorts or searches this
+    // collection. The bcrypt hash stays readable — it is not personal data, and it is compared by the
+    // application rather than by a query.
+    const storedAdmin = await db.collection('admin').findOne({ _id: plainAdmin._id });
+    for (const p of ['login.email', 'personalData.firstName', 'personalData.lastName']) {
+      assert.ok(isCiphertext(at(storedAdmin, p)), `admin.${p} is subtype 6`);
+    }
+    assert.equal(storedAdmin.login.password, plainAdmin.login.password, 'the operator bcrypt hash is untouched');
+
+    // The company: the two people named on it, and nothing else. Everything left readable here is
+    // either a matter of public record or what the storefront hands to anonymous visitors — and three
+    // of the four assertions below are index keys, so a conversion that took them would break a read
+    // rather than slow one.
+    const storedCompany = await db.collection('company').findOne({ _id: plainCompany._id });
+    for (const p of ['contactPerson', 'administrator']) {
+      assert.ok(isCiphertext(at(storedCompany, p)), `company.${p} is subtype 6`);
+    }
+    assert.equal(storedCompany.legalName, plainCompany.legalName, 'the registered name is untouched');
+    assert.equal(storedCompany.vatNumber, plainCompany.vatNumber, 'the VAT number is untouched');
+    assert.equal(storedCompany.certifiedEmail, plainCompany.certifiedEmail, 'the certified address is untouched');
+    assert.deepEqual(storedCompany.address.position, { type: 'Point', coordinates: [9.6, 45.6] },
+      'the shop point is untouched — address.position_2dsphere and the map both read it');
+
+    // ⚠️ One data key per converting collection, named after it, and NOT one shared key. Asserted
+    // before the test mints anything of its own below, because `openEncryption` creates a key the
+    // moment it fails to find one — after that line this count proves nothing. `user` is absent on
+    // purpose: its migration converts no document, so it never opens an encryption handle at all.
+    const vault = await db.collection('__keyVault').find({}, { projection: { keyAltNames: 1 } }).toArray();
+    assert.deepEqual(vault.flatMap(({ keyAltNames }) => keyAltNames).sort(), ['admin', 'company', 'shopOwner'],
+      'one data key per converted collection, under its own alt name');
+
+    // ⚠️ Running a conversion twice converts nothing the second time — which is what makes a run that
+    // died halfway resumable, and what stops a re-run turning ciphertext into ciphertext-of-ciphertext
+    // that no `down` could unwind. Driven directly, because migrate-mongo will not re-apply a
+    // migration its changelog already carries.
+    //
+    // ⚠️ And it runs here with `CSFLE_MASTER_KEY_PATH` REMOVED, which is the sharp end of the same
+    // claim: a migration with nothing left to convert must not so much as open a `ClientEncryption`,
+    // because that is what lets these four apply on a machine with no master key — every replay from
+    // empty, the test database included, and a fresh clone that has never been handed the key. A
+    // version that opened the handle first and found nothing to do second would pass every assertion
+    // below and fail on a developer's laptop.
+    const keyPath = process.env.CSFLE_MASTER_KEY_PATH;
+    delete process.env.CSFLE_MASTER_KEY_PATH;
+    try {
+      await require(path.join(MIGRATIONS_DIR, '20260808000100-alter-shopOwner-encrypted.js')).up(db, client);
+    } finally {
+      process.env.CSFLE_MASTER_KEY_PATH = keyPath;
+    }
+    const rerun = await db.collection('shopOwner').findOne({ _id: plain._id });
+    assert.ok(Buffer.from(rerun.login.email.buffer).equals(Buffer.from(stored.login.email.buffer)),
+      'a second up leaves the bytes identical — nothing is encrypted twice');
+
+    // ⚠️ The reason `login.email` is DETERMINISTIC and the other ten are not: encrypting the same
+    // address again produces the same bytes, so the account is still findable by it and
+    // `login.email_unique` still means something. Every login on the platform is this query.
+    const { openEncryption, ALGORITHM_DETERMINISTIC, ALGORITHM_RANDOM } = require('../lib/encryption.js');
+    const encryption = await openEncryption(client, 'shopOwner');
+    const lookup = await encryption.encrypt(plain.login.email,
+      { keyAltName: 'shopOwner', algorithm: ALGORITHM_DETERMINISTIC });
+    const found = await db.collection('shopOwner').findOne({ 'login.email': lookup });
+    assert.ok(found, 'the account is findable by deterministically encrypted login address');
+    assert.ok(found._id.equals(plain._id), 'and it is the right account');
+
+    // The mirror of that claim, and the reason the other ten are random: a random ciphertext of the
+    // same value differs every time, so no equality query can reach it — which is what makes it the
+    // right default for anything nothing looks up.
+    const twice = await Promise.all([0, 1].map(() =>
+      encryption.encrypt(plain.personalData.contacts.mobile, { keyAltName: 'shopOwner', algorithm: ALGORITHM_RANDOM })));
+    assert.equal(Buffer.from(twice[0].buffer).equals(Buffer.from(twice[1].buffer)), false,
+      'random ciphertext differs on every encryption');
+
+    // The round trip: `decrypt` needs neither the algorithm nor the key name — both ride inside the
+    // blob — so a `down` is exact rather than lossy, and needs nothing but the master key.
+    await mm.down(db, client); // 20260808000300-alter-user-encrypted
+    await mm.down(db, client); // 20260808000200-alter-company-encrypted
+    await mm.down(db, client); // 20260808000100-alter-shopOwner-encrypted
+    await mm.down(db, client); // 20260808000000-alter-admin-encrypted
+
+    const back = await db.collection('shopOwner').findOne({ _id: plain._id });
+    assert.equal(back.login.email, plain.login.email, 'the login address came back');
+    assert.equal(back.notes, 'Operator note', 'the operator note came back');
+    assert.equal(back.emailVerify.newEmailTmp, 'moved@t.co', 'the pending address came back');
+    assert.equal(back.personalData.address.street, 'Via', 'the street came back');
+    assert.equal(back.personalData.address.postalCode, '24030', 'the postal code came back');
+    assert.equal(back.personalData.address.province, 'BG', 'the province came back');
+    assert.equal(back.personalData.contacts.mobile, '333', 'the mobile came back');
+    assert.equal(back.personalData.contacts.landline, '035', 'the landline came back');
+    assert.equal(back.personalData.contacts.email, plain.personalData.contacts.email, 'the contact address came back');
+    // A Date and a whole GeoJSON object, both restored as their BSON types rather than as strings:
+    // `encrypt` takes any BSON value, not only a string, which is what lets the point be one blob.
+    assert.deepEqual(back.personalData.birth.date, new Date('1970-11-24T00:00:00Z'), 'the date of birth came back a Date');
+    assert.deepEqual(back.personalData.address.position, { type: 'Point', coordinates: [9.6, 45.6] },
+      'the point came back a GeoJSON object');
+
+    const backAdmin = await db.collection('admin').findOne({ _id: plainAdmin._id });
+    assert.equal(backAdmin.login.email, plainAdmin.login.email, 'the operator login address came back');
+    assert.equal(backAdmin.personalData.firstName, 'Op', 'the operator given name came back');
+    assert.equal(backAdmin.personalData.lastName, 'Erator', 'the operator family name came back');
+
+    const backCompany = await db.collection('company').findOne({ _id: plainCompany._id });
+    assert.equal(backCompany.contactPerson, 'Contact P', 'the contact person came back');
+    assert.equal(backCompany.administrator, 'Admin A', 'the administrator came back');
+
+    await db.collection('shopOwner').deleteOne({ _id: plain._id });
+    await db.collection('admin').deleteOne({ _id: plainAdmin._id });
+    await db.collection('company').deleteOne({ _id: plainCompany._id });
+    assert.equal((await mm.up(db, client)).length, 4, 'the four encrypted alters re-applied');
   });
 
   test('down reverts every migration', async () => {

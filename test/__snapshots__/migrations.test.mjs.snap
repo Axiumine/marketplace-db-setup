@@ -297,8 +297,8 @@ exports[`the full validator of every collection is frozen > admin validator 1`] 
         ],
         "properties": {
           "email": {
-            "bsonType": "string",
-            "maxLength": 250
+            "bsonType": "binData",
+            "description": "login address, deterministically encrypted — equality is the only query it supports"
           },
           "password": {
             "bsonType": "string",
@@ -333,12 +333,12 @@ exports[`the full validator of every collection is frozen > admin validator 1`] 
         ],
         "properties": {
           "firstName": {
-            "bsonType": "string",
-            "maxLength": 100
+            "bsonType": "binData",
+            "description": "given name, encrypted"
           },
           "lastName": {
-            "bsonType": "string",
-            "maxLength": 100
+            "bsonType": "binData",
+            "description": "family name, encrypted"
           }
         },
         "additionalProperties": false
@@ -428,12 +428,12 @@ exports[`the full validator of every collection is frozen > company validator 1`
             "minLength": 11
           },
           "contactPerson": {
-            "bsonType": "string",
-            "maxLength": 50
+            "bsonType": "binData",
+            "description": "the person to contact at this company, encrypted — a natural person inside a legal record"
           },
           "administrator": {
-            "bsonType": "string",
-            "maxLength": 50
+            "bsonType": "binData",
+            "description": "the administrator of this company, encrypted — a natural person inside a legal record"
           },
           "uniqueCode": {
             "bsonType": "string",
@@ -735,8 +735,8 @@ exports[`the full validator of every collection is frozen > shopOwner validator 
         ],
         "properties": {
           "email": {
-            "bsonType": "string",
-            "maxLength": 250
+            "bsonType": "binData",
+            "description": "login address, deterministically encrypted — equality is the only query it supports"
           },
           "password": {
             "bsonType": "string",
@@ -789,7 +789,8 @@ exports[`the full validator of every collection is frozen > shopOwner validator 
             ],
             "properties": {
               "date": {
-                "bsonType": "date"
+                "bsonType": "binData",
+                "description": "date of birth, encrypted — no range query and no sort can reach it"
               }
             },
             "additionalProperties": false
@@ -805,65 +806,24 @@ exports[`the full validator of every collection is frozen > shopOwner validator 
             ],
             "properties": {
               "street": {
-                "bsonType": "string",
-                "maxLength": 250
+                "bsonType": "binData",
+                "description": "street and number, encrypted"
               },
               "postalCode": {
-                "bsonType": "string",
-                "minLength": 5,
-                "maxLength": 5
+                "bsonType": "binData",
+                "description": "postal code, encrypted — the exactly-5 rule is gone with the plaintext"
               },
               "city": {
                 "bsonType": "string",
                 "maxLength": 100
               },
               "province": {
-                "bsonType": "string",
-                "minLength": 2,
-                "maxLength": 2
+                "bsonType": "binData",
+                "description": "province, encrypted — the exactly-2 rule is gone with the plaintext"
               },
               "position": {
-                "bsonType": "object",
-                "title": "object",
-                "required": [
-                  "type",
-                  "coordinates"
-                ],
-                "properties": {
-                  "type": {
-                    "bsonType": "string",
-                    "maxLength": 5,
-                    "description": "Point"
-                  },
-                  "coordinates": {
-                    "bsonType": "array",
-                    "minItems": 2,
-                    "maxItems": 2,
-                    "items": [
-                      {
-                        "bsonType": [
-                          "double",
-                          "int",
-                          "long"
-                        ],
-                        "maximum": 180,
-                        "minimum": -180,
-                        "description": "longitude"
-                      },
-                      {
-                        "bsonType": [
-                          "double",
-                          "int",
-                          "long"
-                        ],
-                        "maximum": 90,
-                        "minimum": -90,
-                        "description": "latitude"
-                      }
-                    ]
-                  }
-                },
-                "additionalProperties": false
+                "bsonType": "binData",
+                "description": "GeoJSON point, encrypted whole — no 2dsphere index can read it, and none exists here"
               }
             },
             "additionalProperties": false
@@ -877,16 +837,16 @@ exports[`the full validator of every collection is frozen > shopOwner validator 
             ],
             "properties": {
               "mobile": {
-                "bsonType": "string",
-                "maxLength": 12
+                "bsonType": "binData",
+                "description": "mobile number, encrypted"
               },
               "landline": {
-                "bsonType": "string",
-                "maxLength": 12
+                "bsonType": "binData",
+                "description": "landline number, encrypted"
               },
               "email": {
-                "bsonType": "string",
-                "maxLength": 250
+                "bsonType": "binData",
+                "description": "contact address, encrypted — randomly, unlike the login address, because nothing looks an account up by it"
               }
             },
             "additionalProperties": false
@@ -911,9 +871,8 @@ exports[`the full validator of every collection is frozen > shopOwner validator 
         "description": "present and true: awaiting admin approval (flagged by telepromoter) or deleted"
       },
       "notes": {
-        "bsonType": "string",
-        "maxLength": 2000,
-        "description": "internal notes written by an admin about this shop owner, never visible to them"
+        "bsonType": "binData",
+        "description": "internal notes written by an admin about this shop owner, encrypted, never visible to them"
       },
       "resetPwd": {
         "bsonType": "object",
@@ -959,9 +918,8 @@ exports[`the full validator of every collection is frozen > shopOwner validator 
             "description": "wrong-hash attempts, the fifth deletes the account"
           },
           "newEmailTmp": {
-            "bsonType": "string",
-            "maxLength": 250,
-            "description": "new email awaiting confirmation during an email change"
+            "bsonType": "binData",
+            "description": "new email awaiting confirmation, deterministically encrypted — koa-utils looks the account up by it"
           }
         },
         "additionalProperties": false
@@ -1006,8 +964,8 @@ exports[`the full validator of every collection is frozen > user validator 1`] =
             ],
             "properties": {
               "email": {
-                "bsonType": "string",
-                "maxLength": 250
+                "bsonType": "binData",
+                "description": "login address, deterministically encrypted — equality is the only query it supports"
               },
               "password": {
                 "bsonType": "string",
@@ -1042,12 +1000,12 @@ exports[`the full validator of every collection is frozen > user validator 1`] =
             ],
             "properties": {
               "firstName": {
-                "bsonType": "string",
-                "maxLength": 100
+                "bsonType": "binData",
+                "description": "given name, encrypted"
               },
               "lastName": {
-                "bsonType": "string",
-                "maxLength": 100
+                "bsonType": "binData",
+                "description": "family name, encrypted"
               },
               "birth": {
                 "bsonType": "object",
@@ -1057,7 +1015,8 @@ exports[`the full validator of every collection is frozen > user validator 1`] =
                 ],
                 "properties": {
                   "date": {
-                    "bsonType": "date"
+                    "bsonType": "binData",
+                    "description": "date of birth, encrypted — no range query and no sort can reach it"
                   }
                 },
                 "additionalProperties": false
@@ -1067,17 +1026,16 @@ exports[`the full validator of every collection is frozen > user validator 1`] =
                 "title": "object",
                 "properties": {
                   "mobile": {
-                    "bsonType": "string",
-                    "maxLength": 12
+                    "bsonType": "binData",
+                    "description": "mobile number, encrypted"
                   },
                   "landline": {
-                    "bsonType": "string",
-                    "maxLength": 12
+                    "bsonType": "binData",
+                    "description": "landline number, encrypted"
                   },
                   "email": {
-                    "bsonType": "string",
-                    "maxLength": 250,
-                    "description": "a second address to be reached on — the credential is login.email"
+                    "bsonType": "binData",
+                    "description": "a second address to be reached on, encrypted — the credential is login.email"
                   }
                 },
                 "additionalProperties": false
@@ -1102,70 +1060,28 @@ exports[`the full validator of every collection is frozen > user validator 1`] =
                   "bsonType": "objectId"
                 },
                 "label": {
-                  "bsonType": "string",
-                  "maxLength": 50,
-                  "description": "what the customer calls this address — \\"home\\", \\"office\\". Optional and free text"
+                  "bsonType": "binData",
+                  "description": "what the customer calls this address — \\"home\\", \\"office\\". Encrypted, optional, free text"
                 },
                 "street": {
-                  "bsonType": "string",
-                  "maxLength": 250
+                  "bsonType": "binData",
+                  "description": "street and number, encrypted"
                 },
                 "postalCode": {
-                  "bsonType": "string",
-                  "minLength": 5,
-                  "maxLength": 5
+                  "bsonType": "binData",
+                  "description": "postal code, encrypted — the exactly-5 rule is gone with the plaintext"
                 },
                 "city": {
-                  "bsonType": "string",
-                  "maxLength": 100
+                  "bsonType": "binData",
+                  "description": "city, encrypted"
                 },
                 "province": {
-                  "bsonType": "string",
-                  "minLength": 2,
-                  "maxLength": 2
+                  "bsonType": "binData",
+                  "description": "province, encrypted — the exactly-2 rule is gone with the plaintext"
                 },
                 "position": {
-                  "bsonType": "object",
-                  "title": "object",
-                  "required": [
-                    "type",
-                    "coordinates"
-                  ],
-                  "properties": {
-                    "type": {
-                      "bsonType": "string",
-                      "maxLength": 5,
-                      "description": "Point"
-                    },
-                    "coordinates": {
-                      "bsonType": "array",
-                      "minItems": 2,
-                      "maxItems": 2,
-                      "items": [
-                        {
-                          "bsonType": [
-                            "double",
-                            "int",
-                            "long"
-                          ],
-                          "maximum": 180,
-                          "minimum": -180,
-                          "description": "longitude"
-                        },
-                        {
-                          "bsonType": [
-                            "double",
-                            "int",
-                            "long"
-                          ],
-                          "maximum": 90,
-                          "minimum": -90,
-                          "description": "latitude"
-                        }
-                      ]
-                    }
-                  },
-                  "additionalProperties": false
+                  "bsonType": "binData",
+                  "description": "GeoJSON point, encrypted whole — no 2dsphere index can read it, and none exists here"
                 }
               },
               "additionalProperties": false
@@ -1232,9 +1148,8 @@ exports[`the full validator of every collection is frozen > user validator 1`] =
                 "description": "wrong-hash attempts, the fifth deletes the account"
               },
               "newEmailTmp": {
-                "bsonType": "string",
-                "maxLength": 250,
-                "description": "new email awaiting confirmation during an email change"
+                "bsonType": "binData",
+                "description": "new email awaiting confirmation, deterministically encrypted — koa-utils looks the account up by it"
               }
             },
             "additionalProperties": false
