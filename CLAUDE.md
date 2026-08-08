@@ -11,7 +11,7 @@ sub-repos.
 | Need | File |
 |---|---|
 | history, demo seed, glossary, the mongosh-port fixes | `README.md` |
-| prerequisites, the five test suites, gates, hooks, migrate-mongo state | `REPO.md` |
+| prerequisites, the six test suites, gates, hooks, migrate-mongo state | `REPO.md` |
 | why a validator shape is the way it is | `lib/schemas/README.md` |
 | anything cross-repo | parent `CLAUDE.md` |
 
