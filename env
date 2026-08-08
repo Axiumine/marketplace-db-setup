@@ -6,6 +6,28 @@ MONGO_DEV_DB=
 MONGO_DEV_CONN_STRING=
 SEED_DEMO=false
 
+# C S F L E   (ADR-029)
+#
+# Read by the four `*-encrypted` migrations, and ONLY when they find documents to convert — a
+# database replayed from empty needs neither variable. A dev rebuild with SEED_DEMO=true does.
+#
+# ⚠️ CSFLE_MASTER_KEY_PATH must name the SAME 96-byte file the nine services read. The data keys in
+# the vault are encrypted under it, so a migration run against a different master key mints keys the
+# platform cannot use and every field it converts becomes an undecryptable blob. Losing this file
+# loses every encrypted field on the platform, permanently — there is no escrow and no reset. Keep it
+# outside the repo; it is gitignored, and it is not a credential that can be rotated by replacing it.
+CSFLE_MASTER_KEY_PATH=
+#
+# ⚠️ The namespace is `<the database this .env points at>.__keyVault` — the SAME database, not a
+# vault database of its own. Every user on this cluster is scoped to one database (dbOwner or
+# readWrite on it and nothing else), so a vault anywhere else answers `Unauthorized` on the very
+# first `createIndex`, for the migrations and for all nine services alike. Giving each of ten users a
+# second grant would buy nothing: the vault holds data keys that are themselves encrypted under the
+# master key file, so reading it without that file yields nothing, and the file is what the split
+# would have been protecting. Set it to `${MONGO_DEV_DB}.__keyVault` here and to that service's own
+# database in each service's .env — the test blocks below get their own throwaway database's name.
+CSFLE_KEY_VAULT_NAMESPACE=
+
 # Qodana Cloud token (see qodana.sh). Never commit a real value here — this file is the
 # committed placeholder template; the real token lives only in the gitignored .env.
 QODANA_TOKEN=

@@ -138,6 +138,12 @@ const normalize = (value) => {
  * against a real server it throws `IndexNotFound` for an index that was never created, and the
  * guards around it are covered in test/migrationGuards.test.mjs with a fake that throws. This one
  * is about the calls that get made, not about how failures are handled.
+ *
+ * `find` returns an EMPTY cursor, which is what pins the three `*-encrypted` migrations to the shape
+ * they must have against a collection with nothing in it: read the collection, find nothing to
+ * convert, open no `ClientEncryption` and write nothing. That is the path every replay from empty
+ * takes — the test database on every run — and the reason those migrations need no master key to
+ * apply. The conversion itself is driven in test/migrationGuards.test.mjs, with documents.
  */
 function recordingDb() {
   const log = [];
@@ -167,6 +173,14 @@ function recordingDb() {
         },
         async updateMany(filter, update) {
           log.push({ call: 'updateMany', name, filter, update });
+        },
+        find(filter) {
+          log.push({ call: 'find', name, filter });
+          return {
+            async toArray() {
+              return [];
+            }
+          };
         }
       };
     }
@@ -258,4 +272,24 @@ test('every migration on disk is covered by this suite', () => {
     expect(typeof migration.up, `${file} exports up()`).toBe('function');
     expect(typeof migration.down, `${file} exports down()`).toBe('function');
   }
+});
+
+// ⚠️ `address({ encrypted: [...] })` names its members as STRINGS, and a misspelt one is the one
+// mistake in this repo that no other test can see: `encrypted.includes('postCode')` answers false
+// exactly as it does for a member deliberately left in the clear, so the builder would return a
+// perfectly valid validator with `postalCode` still typed `string` — and the collection would be
+// half converted before anything noticed, at the first service write of a blob into a string field.
+// Hence the guard, and hence this: it is the only assertion that a typo is louder than a decision.
+test('address() refuses a member name it does not have', () => {
+  evictLib();
+  const { address } = require(path.join(LIB_DIR, 'schemas', 'geo.js'));
+
+  // The whole message, list included: a reader who misspelt one member needs to be told the five
+  // that exist, and the separator is part of that — `join('')` would answer
+  // "streetpostalCodecityprovinceposition", which is a worse error than the one it is diagnosing.
+  expect(() => address({ maxLength: 100, positionRequired: false, encrypted: ['postCode'] }))
+    .toThrow("address(): 'postCode' is not an address member — expected one of street, postalCode, city, province, position");
+  // And the four real ones do not throw — a guard that rejected everything would pass the line above.
+  expect(() => address({ maxLength: 100, positionRequired: false, encrypted: ['street', 'postalCode', 'city', 'province'] }))
+    .not.toThrow();
 });

@@ -3,59 +3,16 @@
 // Ported from the original mongosh setup script (see CLAUDE.md for the documented fixes applied
 // during the migrate-mongo port).
 //
-// The login sub-document, the password-reset slot and the deleted/disabled gates come from
-// `lib/schemas/account.js`: an admin and an shopOwner are the same thing seen from the auth side —
-// role here is which collection you authenticate against, not a field — so those four are one shape
-// by definition. What is left below is the whole difference between the two: an admin has a name and
-// nothing else. No `waitApprov` (nobody approves an operator), no `emailVerify` (the account is
-// created by hand), no `registeredAt`.
+// The shape it installs lived in this file until `20260808000000-alter-admin-encrypted` needed a
+// second state of it; it is `validatorAdmin()` in `lib/schemas/admin.js` now, with no argument. That
+// call produces what was inlined here byte for byte, key order included — the migration-call snapshot
+// is what proves it, and a diff in that snapshot is the only way this edit could have gone wrong.
+// Why the shapes live in `lib/schemas/` at all, and what that costs: `lib/schemas/README.md`.
 
 const { migrationCreation } = require('../lib/schemas/collection');
-const { LOGIN, RESET_PWD, DELETED, DISABLED, INDEXES_LOGIN_EMAIL } = require('../lib/schemas/account');
+const { INDEXES_LOGIN_EMAIL } = require('../lib/schemas/account');
+const { validatorAdmin } = require('../lib/schemas/admin');
 
 const COLLECTION = 'admin';
 
-const validator = {
-  $jsonSchema: {
-    bsonType: 'object',
-    title: COLLECTION,
-    required: [
-      'login',
-      'personalData'
-    ],
-    properties: {
-      _id: {
-        bsonType: 'objectId'
-      },
-      login: LOGIN,
-      personalData: {
-        bsonType: 'object',
-        title: 'object',
-        required: [
-          'firstName',
-          'lastName'
-        ],
-        properties: {
-          firstName: {
-            bsonType: 'string',
-            maxLength: 100
-          },
-          lastName: {
-            bsonType: 'string',
-            maxLength: 100
-          }
-        },
-        additionalProperties: false
-      },
-      deleted: DELETED,
-      disabled: DISABLED,
-      resetPwd: RESET_PWD,
-      __v: {
-        bsonType: 'int'
-      }
-    },
-    additionalProperties: false
-  }
-};
-
-module.exports = migrationCreation(COLLECTION, validator, INDEXES_LOGIN_EMAIL);
+module.exports = migrationCreation(COLLECTION, validatorAdmin(), INDEXES_LOGIN_EMAIL);

@@ -25,7 +25,8 @@
   "dependencies": {
     "dotenv": "^17.4.2",
     "migrate-mongo": "^14.0.7",
-    "mongodb": "^7.5.0"
+    "mongodb": "^7.5.0",
+    "mongodb-client-encryption": "^7.2.1"
   },
   "devDependencies": {
     "@stryker-mutator/core": "^9.6.1",

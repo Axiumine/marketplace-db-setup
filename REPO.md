@@ -162,7 +162,7 @@ reason unrelated to what it tests. `validItemCategory(over)` and `validItem(over
 because most of their tests differ from the minimum by one field; `validItem` mints its two references
 rather than resolving them, since nothing checks them.
 
-## The four unit suites, and the 100% gates
+## The five unit suites, and the 100% gates
 
 The replay was the only suite here for most of the repo's life, and both this project and
 `vitest.config.mjs` argued coverage should not be gated: a statement gate over migration files would mostly
@@ -176,6 +176,7 @@ answer**. It stopped being fair the moment the unit suites landed.
 | `test/mongoUrl.test.mjs` | every branch of `lib/mongoUrl.js`: credentials after the scheme, only the first `://` replaced, percent-encoding, `&authSource=` when a query already exists, no query parameter at all for `undefined` / `''` / `null`, and a missing piece reported under the caller's own variable name. |
 | `test/migrateMongoConfig.test.mjs` | `migrate-mongo-config.js` under stubbed **fake** `MONGO_DEV_*`, asserting the whole exported object with one `deepEqual` — a misspelled key there is not an error, it is a migrate-mongo default silently taking over. |
 | `test/migrationCalls.test.mjs` | the backstop: every migration's `up` and `down` against a recording fake `db`, with the ordered driver-call log frozen as a snapshot. Final state cannot see an intermediate one, and `alter-company-public` is widen → backfill → narrow, where skipping the widen leaves the end state identical. |
+| `test/encryption.test.mjs` | the four guards in `lib/encryption.js` that a correct environment never trips: `CSFLE_KEY_VAULT_NAMESPACE` unset, set to `''`, `CSFLE_MASTER_KEY_PATH` unset, and a master key that is not exactly 96 bytes. `migrations.test.mjs` drives the conversion itself against a real MongoDB; only these drive the file *refusing to run*. Each passes `null` as the client, which is the proof that all four fire before the connection is touched — one moving below the `ClientEncryption` construction turns the asserted message into a `TypeError`. |
 
 `migrateMongoConfig` had no test of any kind and the coverage gate did not notice: v8 only reports files
 that were **loaded**, so a file no suite requires is absent from the report rather than shown at 0%, and
@@ -212,7 +213,7 @@ thoroughly it is asserted. That alone was 54 survivors, and only the shapes buil
 (`position()`, `address()`) were ever caught. Keep the eviction if you touch that file; the modules are pure
 data, so nothing else observes the reload.
 
-⚠️ **Load a CommonJS file the same way every other caller in the process loads it.** Both unit suites use
+⚠️ **Load a CommonJS file the same way every other caller in the process loads it.** All five unit suites use
 `createRequire(import.meta.url)`, not `import`, and so does `migrations.test.mjs` for `buildMongoUrl`.
 migrate-mongo requires a migration through node's own loader; an `import()` of the same path goes through
 vite, and v8 then holds **two scripts for one path with different byte offsets**. Merging coverage reports
