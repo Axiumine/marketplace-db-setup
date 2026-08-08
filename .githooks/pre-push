@@ -1,0 +1,391 @@
+#!/usr/bin/env bash
+# Three gates, all blocking:
+#   1. migrations + coverage — every migration replays against a real MongoDB and the
+#      run is gated at 100% on every metric (yarn test:cov)
+#   2. mutation              — Stryker, gated at 100 (yarn test:mutation)
+#   3. Qodana                — inspections, SAST, SCA, license audit, coverage (qodana.yaml)
+#
+# One omission left, down from three:
+#
+#   lint — there is no eslint.config.js and no .prettierrc here, the one exception
+#     on the platform. The content is applied migrations, and those are immutable:
+#     a formatter that rewrites a file nobody may edit produces a diff nobody may
+#     take. Qodana still inspects them (gate 3) — inspecting is not rewriting.
+#
+# ⚠️ Gate 2 is new, and this header used to argue at length that it could not exist:
+# "there is no stryker.config.mjs and no test:mutation script. Mutating a migration means
+# mutating an immutable, already-applied file; the answer to a survivor there is never
+# 'edit the migration'." Both halves were wrong. There is a stryker.config.mjs now, and the
+# immutability argument confused the subject of the edit: a surviving mutant in a migration
+# says the TEST SUITE does not notice that migration being wrong, and the fix is an
+# assertion in test/, which nothing forbids. The first run measured 52.92% — a repo at 100%
+# coverage where more than a third of the mutants nobody would have caught. Changing
+# `maxLength: 150` to `151`, `unique: true` to `false`, `'2dsphere'` to `''` or a `bsonType`
+# list to `[]` broke no test at all, because every assertion was partial and no test ever
+# read those bytes. test/migrationCalls.test.mjs and the two frozen-shape tests in
+# test/migrations.test.mjs are what closed it.
+#
+# ⚠️ Coverage used to be on that list, and it is not any more. The argument was that the
+# only suite here drove migrations end to end, so a statement gate would mostly measure
+# whether every migration made it into MIGRATION_FILES. Two unit suites landed
+# (test/migrationGuards.test.mjs, test/mongoUrl.test.mjs) and took the repo to 100% on all
+# four metrics by covering exactly what the replay cannot reach — the `IndexNotFound`
+# re-throws, the SEED_DEMO branches, the URL assembly. `thresholds: { 100: true }` is in
+# vitest.config.mjs and `testCoverageThresholds` is in qodana.yaml. Never lower either to
+# get a push through; drive the uncovered branch instead.
+#
+# What IS worth blocking a push on is the thing this repo actually asserts: that
+# every migration still replays against a real MongoDB and leaves the schema it
+# claims to. That suite drops its own database, replays all migrations up, then
+# reverts them down — it fails loudly when a validator, an index or an ordering
+# breaks, which is exactly the class of bug that reaches production silently.
+#
+# Gate 3 was the newer half until gate 2 landed. `qodana.yaml` and `qodana.sh` had been sitting in this
+# repo since the sweep that gave the other nine a scan, with no hook calling either
+# of them — this was the last unwired Qodana on the platform. What it adds is the JS
+# inspections and taint analysis over migrations/, lib/ and setup/, the SCA
+# vulnerable-dependency check, the license audit — all of which read the tree and
+# package.json rather than the tests — and, since the coverage gate landed, a second
+# reading of the same lcov the gate above just wrote.
+#
+# Ahead of gate 1: node. Gates 1 and 2 shell out to yarn, and `engines.node` is a
+# HARD gate under yarn classic — a mismatch exits 1 with `The engine "node" is
+# incompatible with this module`, not a warning. Without the switch below, a push
+# from a shell on the machine default node dies before the first gate, under
+# whatever banner that gate prints, which is never what went wrong. Gate 3 does not
+# need it: qodana.sh runs the linter in a container and never calls node or yarn.
+#
+# Enabled by `git config core.hooksPath .githooks`, which the package.json
+# `prepare` script sets automatically on `yarn install`.
+#
+# ⚠️ This file must stay executable. Git skips a non-executable hook with only a
+# hint, so the gate disappears without failing — `marketplace-dev-public-authorization`
+# shipped that way until it was caught.
+set -euo pipefail
+
+cd "$(git rev-parse --show-toplevel)"
+
+# Read the requirement from package.json rather than hard-coding it, so bumping the
+# engine in one place cannot leave the hook testing against a version nothing else
+# uses. Same block as marketplace-common's pre-commit, which is where it was written.
+# The `|| REQUIRED_NODE=''` is load-bearing under `set -euo pipefail`: with no node on PATH the
+# substitution exits 127, and `-e` plus `pipefail` then kill the hook right here — silently, with
+# no output at all, before the block below can print the one message that would explain it.
+# Degrading to empty instead lets node_satisfies() return 1 and the real diagnostic fire.
+REQUIRED_NODE="$(node -p 'require("./package.json").engines.node' 2> /dev/null | tr -d '^~>= ')" || REQUIRED_NODE=''
+
+# Empty means node is not on PATH at all — a different failure from the wrong version, and one
+# the block below cannot describe: with nothing to interpolate it prints `engines.node ^` and a
+# fix line reading `nvm install  && nvm use `, neither of which names anything.
+if [ -z "$REQUIRED_NODE" ]; then
+	cat >&2 <<'MSG'
+
+────────────────────────────────────────────────────────────────────────────
+PUSH BLOCKED — node not found in PATH.
+
+engines.node could not be read from package.json, so the version the gates need
+is unknown and nvm has nothing to switch to.
+
+Fix it with:
+
+    nvm install --lts && nvm use --lts
+
+then push again.
+────────────────────────────────────────────────────────────────────────────
+MSG
+	exit 1
+fi
+
+node_satisfies() {
+	local current
+	current="$(node -v 2> /dev/null | tr -d 'v')"
+	[ -n "$current" ] && [ -n "$REQUIRED_NODE" ] || return 1
+	# caret semantics: same major, and not older than the pin.
+	[ "${current%%.*}" = "${REQUIRED_NODE%%.*}" ] || return 1
+	[ "$(printf '%s\n%s\n' "$REQUIRED_NODE" "$current" | sort -V | head -n 1)" = "$REQUIRED_NODE" ]
+}
+
+if ! node_satisfies; then
+	# nvm.sh trips over unbound variables, so -u comes off around the source.
+	NVM_SH="${NVM_DIR:-$HOME/.nvm}/nvm.sh"
+	if [ -s "$NVM_SH" ]; then
+		echo "pre-push: node $(node -v 2> /dev/null) does not satisfy engines.node ^$REQUIRED_NODE — switching via nvm."
+		set +u
+		# shellcheck disable=SC1090
+		. "$NVM_SH" > /dev/null 2>&1 || true
+		nvm use "$REQUIRED_NODE" > /dev/null 2>&1 || true
+		set -u
+	fi
+fi
+
+if ! node_satisfies; then
+	cat >&2 <<MSG
+
+────────────────────────────────────────────────────────────────────────────
+PUSH BLOCKED — wrong node.
+
+node $(node -v 2> /dev/null || echo '(not found)') does not satisfy engines.node ^$REQUIRED_NODE, and nvm could
+not be used to switch — either it is not installed at \${NVM_DIR:-\$HOME/.nvm}/nvm.sh
+or that version is not installed. yarn refuses to run at all in this state, so
+the migration gate below could not report anything.
+
+Fix it with:
+
+    nvm install $REQUIRED_NODE && nvm use $REQUIRED_NODE
+
+then push again.
+────────────────────────────────────────────────────────────────────────────
+MSG
+	exit 1
+fi
+
+# Every gate below shells out to yarn. Without this check a missing binary is reported as
+# whichever gate happened to run first ("eslint or prettier is not clean"), which sends the
+# reader after the wrong thing. pre-commit already carries the same check.
+if ! command -v yarn > /dev/null 2>&1; then
+	cat >&2 <<'MSG'
+
+────────────────────────────────────────────────────────────────────────────
+PUSH BLOCKED — yarn not found in PATH.
+
+None of the gates below could run: every one of them shells out to yarn.
+
+Fix it with:
+
+    npm i -g yarn@1.22.22
+
+then push again.
+────────────────────────────────────────────────────────────────────────────
+MSG
+	exit 1
+fi
+
+echo "pre-push [1/3]: replaying every migration against a real MongoDB, gated at 100% coverage (yarn test:cov)…"
+
+if ! yarn test:cov; then
+	cat >&2 <<'MSG'
+
+────────────────────────────────────────────────────────────────────────────
+PUSH BLOCKED — the suite is red, or coverage fell below 100%.
+
+Coverage first, because it is the newer half of this gate: vitest.config.mjs
+carries `thresholds: { 100: true }`, so a statement, branch, function or line
+that no test reaches fails the push with a threshold message rather than an
+assertion. The fix is the missing test, never a lower number. What the replay
+cannot reach by construction — the `IndexNotFound` re-throws, the SEED_DEMO
+branches, lib/mongoUrl.js — is covered by test/migrationGuards.test.mjs and
+test/mongoUrl.test.mjs; a new migration with a guarded dropIndex needs a row in
+the former's `guarded` table.
+
+The rest is the migration suite itself. It is not a unit suite: it drops its own
+database, runs all migrations up, asserts the resulting
+collections/validators/indexes, then runs them back down. A failure means one of:
+
+  1. A migration is genuinely broken — a validator, an index, or the order two
+     of them run in. Fix it in a NEW migration; applied migrations are immutable
+     and are never edited (see CLAUDE.md, *Migrations are immutable*).
+  2. A new migration was added but not registered in the suite's MIGRATION_FILES
+     list, so the replay and the assertions disagree about what should exist.
+  3. MongoDB is not reachable, or the MONGO_TEST_* block in .env is incomplete.
+     The connection is assembled from MONGO_TEST_CONN_STRING + MONGO_TEST_UDBOWNER
+     + MONGO_TEST_PWDDBOWNER + MONGO_TEST_AUTH_ADMIN — a populated block does
+     nothing on its own unless lib/mongoUrl.js assembles it. See CLAUDE.md,
+     *Testing*, for the full precedence table.
+
+Re-run `yarn test:cov` until it is green, then push again.
+────────────────────────────────────────────────────────────────────────────
+MSG
+	exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# Gate 2 — mutation. Coverage asks whether a line RAN; mutation asks whether a
+# test would have FAILED had that line been wrong, and in this repo the two
+# answers diverged by half: 100% coverage, 52.92% mutation score.
+#
+# It is deliberately here and not in pre-commit. The run takes ~9 minutes at
+# concurrency 1, and the concurrency is 1 because all three suites share one real
+# MongoDB database that the migration suite drops in its own beforeAll — two
+# workers are two processes wiping each other's collections mid-replay, and the
+# resulting failures get RECORDED AS KILLS, so overload reads as a high score
+# rather than as a broken run. stryker.config.mjs carries the long form, including
+# why a per-worker database cannot be built here (the two test users are scoped
+# `dbOwner` on that one database).
+#
+# ⚠️ No SKIP_TESTS-style reuse is possible: Stryker runs the suite once per mutant
+# under its own instrumentation, so nothing gate 1 produced can stand in for it.
+# ---------------------------------------------------------------------------
+
+echo 'pre-push [2/3]: mutation testing, gated at 100 (yarn test:mutation) — ~9 minutes, concurrency 1…'
+
+if ! yarn test:mutation; then
+	cat >&2 <<'MSG'
+
+────────────────────────────────────────────────────────────────────────────
+PUSH BLOCKED — the mutation score is below 100, or Stryker failed to run.
+
+`thresholds.break: 100` in stryker.config.mjs is what fails this. Never lower
+it; the survivor is a real gap in the suite. Open reports/mutation/mutation.html
+— every survivor is shown as the exact diff Stryker applied, which is the change
+no test noticed.
+
+Three things a survivor here usually means, in order of likelihood:
+
+  1. An assertion is PARTIAL. This was the whole story on the first run: the
+     suite checked that an index EXISTED by name and that a validator had the
+     right title, so every literal inside either was unasserted. The frozen-shape
+     tests are the answer — test/migrationCalls.test.mjs freezes the ordered
+     driver-call log of every migration's up() and down(), and the two "is frozen"
+     tests in test/migrations.test.mjs freeze the resulting validators and index
+     sets. A new migration is picked up by both automatically; run `yarn test -u`
+     and READ THE DIFF before committing the new snapshot.
+
+  2. The mutated line is in a branch no suite enters. Copy
+     test/migrationGuards.test.mjs: it drives the failure paths a working MongoDB
+     never produces, with a fake `db`.
+
+  3. The mutant is genuinely EQUIVALENT — no input can tell the two versions
+     apart. The fix is to change the CODE so the condition can be falsified, or
+     to delete it if it can never be, with the argument written at the site. A
+     `// Stryker disable next-line <Mutator>: <reason>` is the last resort and
+     needs the reason. Never `ignoreStatic` — it masks real gaps platform-wide.
+
+⚠️ A migration being immutable does NOT make its survivors unfixable. The subject
+of the fix is the test suite, not the migration: a survivor says the suite would
+not notice that migration being wrong.
+
+If the run died rather than scored, check MongoDB is reachable — Stryker replays
+the real suite against the real database, once per mutant.
+────────────────────────────────────────────────────────────────────────────
+MSG
+	exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# Gate 3 — Qodana. It runs here as well as in pre-commit, for two reasons that
+# pre-commit structurally cannot cover.
+#
+# 1. `git merge --no-ff` never fires pre-commit. Git runs that hook for
+#    `git commit` only, so in the branch → commit → merge → push flow the merge
+#    commit — the one revision that actually reaches origin — is the single
+#    commit no pre-commit scan ever sees. Two individually clean branches can
+#    merge into a tree that is not.
+# 2. Qodana Cloud files every report under the branch it was produced on, and
+#    pre-commit always runs on the feature branch, before the commit exists. A
+#    repo gated only there can never produce a `main`-tagged report, so `main`
+#    is not offered as the cloud project's default branch and the "new problems"
+#    baseline has nothing stable to compare against. This hook runs after the
+#    merge, standing on main, which is exactly the revision the baseline wants.
+#
+# SKIP_TESTS=1, exactly as the other thirteen repos pass it: qodana.sh would
+# otherwise re-run `yarn test:cov` to produce coverage/lcov.info, and gate 1 above
+# has just written it. Worth being precise about why the flag matters and not only
+# that it saves a replay — qodana.sh runs the suite as `yarn test:cov || true`, so
+# a regenerated report comes with its exit code swallowed. Reusing the one the
+# blocking gate produced keeps the threshold failure loud.
+#
+# Bypass: `SKIP_QODANA=1 git push` (the migration and mutation gates still run).
+# ---------------------------------------------------------------------------
+
+if [ -n "${SKIP_QODANA:-}" ]; then
+	echo 'pre-push: Qodana gate skipped — SKIP_QODANA is set.' >&2
+	exit 0
+fi
+
+# $1 = what is wrong, $2… = the command(s) that fix it. A missing prerequisite
+# blocks; it never warns and continues. A gate that steps aside when it cannot
+# run is not a gate, it is the hole this hook exists to close, reopened one
+# condition lower.
+push_block() {
+	local reason="$1"
+	shift
+	{
+		echo
+		echo '────────────────────────────────────────────────────────────────────────────'
+		echo "PUSH BLOCKED — $reason"
+		echo
+		echo 'Fix it with:'
+		echo
+		printf '    %s\n' "$@"
+		echo
+		echo 'Bypass once (the migration and mutation gates still run): SKIP_QODANA=1 git push'
+		echo '────────────────────────────────────────────────────────────────────────────'
+	} >&2
+	exit 1
+}
+
+command -v qodana > /dev/null 2>&1 ||
+	push_block 'the qodana CLI is not in PATH.' \
+		'# install it, then push again:' \
+		'https://github.com/JetBrains/qodana-cli#installation'
+
+command -v docker > /dev/null 2>&1 ||
+	push_block 'docker not found in PATH — the CLI runs the linter in a container.' \
+		'# install Docker Engine, then push again:' \
+		'https://docs.docker.com/engine/install/'
+
+docker info > /dev/null 2>&1 ||
+	push_block 'docker daemon not reachable.' \
+		'sudo systemctl start docker'
+
+for required in qodana.yaml qodana.sh; do
+	[ -f "$required" ] ||
+		push_block "$required missing from the repo root." \
+			"git checkout $required"
+done
+
+# Track the image declared in qodana.yaml rather than hard-coding a tag here, so
+# bumping the version in one place cannot leave the hook scanning with an older
+# linter than the manual runs use.
+LINTER="$(grep -oE 'jetbrains/qodana-js:[0-9][0-9.]*' qodana.yaml | head -n 1 || true)"
+
+[ -n "$LINTER" ] ||
+	push_block "no 'jetbrains/qodana-js:<version>' image line found in qodana.yaml." \
+		'# restore the `image:` key, then push again:' \
+		'git checkout qodana.yaml'
+
+# The CLI would pull this itself. Blocking instead keeps a slow or unreachable
+# Docker Hub from turning into a failed push: one explicit pull per image bump,
+# versus a network flake on any push.
+docker image inspect "$LINTER" > /dev/null 2>&1 ||
+	push_block "linter image $LINTER not present locally." \
+		"docker pull $LINTER"
+
+# Metadata check only — the value is never read here. qodana.sh loads the token
+# into the process env without printing it.
+{ [ -f ".env" ] && grep -q '^[[:space:]]*QODANA_TOKEN=' ".env"; } ||
+	push_block "no QODANA_TOKEN in .env — Qodana 2023.2+ refuses to start without it." \
+		'# get a project token from https://qodana.cloud, then:' \
+		"echo 'QODANA_TOKEN=<token>' >> .env"
+
+echo "pre-push [3/3]: enforcing the Qodana gate ($LINTER)…"
+
+if ! SKIP_TESTS=1 ./qodana.sh --results-dir .qodana/results; then
+	cat >&2 <<'MSG'
+
+────────────────────────────────────────────────────────────────────────────
+PUSH BLOCKED — Qodana failed.
+
+The gate lives in qodana.yaml: severityThresholds critical 0 / high 0,
+testCoverageThresholds 100 total / 100 fresh, plus the SCA vulnerable-dependency
+check and the third-party license audit. Findings are listed above, with a report
+link on qodana.cloud.
+
+Local SARIF: .qodana/results/qodana.sarif.json
+
+A finding in migrations/ is the awkward case, because an applied migration is
+immutable: fix it in a NEW migration, or — if the inspection is simply wrong
+about a file that must not change — scope an `exclude` entry to that path in
+qodana.yaml with the reason written next to it. Never widen the exclude to the
+whole directory.
+
+This exit code also covers infrastructure failures (daemon died mid-scan, out
+of disk). If the report shows no findings, it was not a finding.
+
+Bypass once (the migration and mutation gates still run): SKIP_QODANA=1 git push
+────────────────────────────────────────────────────────────────────────────
+MSG
+	exit 1
+fi
+
+echo 'pre-push: Qodana clean. Pushing.'

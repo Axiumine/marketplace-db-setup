@@ -1,0 +1,47 @@
+{
+  "name": "marketplace-db-setup",
+  "version": "1.0.0",
+  "main": "migrate-mongo-config.js",
+  "license": "UNLICENSED",
+  "private": true,
+  "engines": {
+    "node": "^24.18.0"
+  },
+  "packageManager": "yarn@1.22.22+sha512.a6b2f7906b721bba3d67d4aff083df04dad64c399707841b7acf00f6b133b7ac24255f2652fa22ae3534329dc6180534e98d17432037ff6fd140556e2bb3137e",
+  "scripts": {
+    "test": "vitest run",
+    "test:seed": "SEED_DEMO=true vitest run",
+    "test:cov": "vitest run --coverage",
+    "test:mutation": "stryker run",
+    "migrate:status": "migrate-mongo status",
+    "migrate:up": "migrate-mongo up",
+    "migrate:down": "migrate-mongo down",
+    "migrate:create": "migrate-mongo create",
+    "semgrep": "docker run --rm --network none -e HOME=/tmp -u \"$(id -u):$(id -g)\" -v \"$PWD\":/src -w /src semgrep/semgrep:1.172.0 semgrep scan --metrics=off --disable-version-check --scan-unknown-extensions --config semgrep/ $(find migrations lib setup test -type f \\( -name '*.mts' -o -name '*.cts' -o -name '*.ts' -o -name '*.mjs' -o -name '*.cjs' -o -name '*.js' \\)) migrate-mongo-config.js",
+    "semgrep:ci": "docker run --rm --network none -e HOME=/tmp -u \"$(id -u):$(id -g)\" -v \"$PWD\":/src -w /src semgrep/semgrep:1.172.0 semgrep scan --metrics=off --disable-version-check --scan-unknown-extensions --error --sarif --output semgrep.sarif --config semgrep/ $(find migrations lib setup test -type f \\( -name '*.mts' -o -name '*.cts' -o -name '*.ts' -o -name '*.mjs' -o -name '*.cjs' -o -name '*.js' \\)) migrate-mongo-config.js",
+    "qodana": "./qodana.sh",
+    "prepare": "git config core.hooksPath .githooks || true"
+  },
+  "dependencies": {
+    "dotenv": "^17.4.2",
+    "migrate-mongo": "^14.0.7",
+    "mongodb": "^7.5.0"
+  },
+  "devDependencies": {
+    "@stryker-mutator/core": "^9.6.1",
+    "@stryker-mutator/vitest-runner": "^9.6.1",
+    "@vitest/coverage-v8": "^4.1.10",
+    "vitest": "^4.1.10"
+  },
+  "author": "Giovanni Manzoni <info@thedoctorweb.com> (https://thedoctorweb.com)",
+  "contributors": [
+    {
+      "name": "The Doctor Web <info@thedoctorweb.com>",
+      "url": "https://thedoctorweb.com/"
+    }
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/Marketplace-Org/marketplace-db-setup.git"
+  }
+}

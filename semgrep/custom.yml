@@ -1,0 +1,57 @@
+# Project-specific Semgrep rules for marketplace-db-setup.
+#
+# Registry packs (p/typescript, p/secrets) are passed on the command line by the
+# `semgrep` / `semgrep:ci` yarn scripts, via vendor/. This file holds only rules
+# specific to the Marketplace platform's own conventions.
+#
+# This repo is migrate-mongo migrations, not an application service, so most of the
+# platform's custom rules do not apply here — grepped before deciding what to keep:
+#   - marketplace-no-log-introspection-code: DROPPED. This repo never reads
+#     INTROSPECTION_CODE / x-introspectioncode; that header exists only on the
+#     service-to-service auth boundary between the backend services, which this repo
+#     is not part of.
+#   - marketplace-no-log-auth-token: DROPPED. This repo has no access/refresh token
+#     handling at all — no Redis sessions, no Authorization header. Nothing
+#     opaque-token shaped exists here for the rule to ever match.
+#   - marketplace-no-log-reset-secret: KEPT. `resetPwd.resetHash` / `resetDateReq` are
+#     real fields, defined by this repo's own validators (see
+#     migrations/20260301000000-create-admin.js and
+#     migrations/20260301000100-create-shopOwner.js). Nothing here logs them
+#     today — the only console.log in the whole tree is the fixed, secret-free skip
+#     message in migrations/20260301001800-seed-demo.js — but a future migration or
+#     seed script that debug-prints a document carrying these fields would
+#     reintroduce the account-enumeration / reset-link risk the flow exists to close.
+#
+# Note: the sink below is restricted to console / logger / log receivers on purpose —
+# matching any `x.y(...)` call gives false positives (e.g. the seed-demo skip message
+# above is itself a console.log call; a rule that fired on receiver alone, without the
+# $ARG regex, would already be too broad for a tree this small).
+rules:
+  # This is the ONE place reset-password material is defined in this repo: the
+  # validators that decide which shapes of `resetPwd` document are even storable.
+  # Logging the reset hash — or the address it was issued for — puts that secret,
+  # and the enumeration signal, into the log file.
+  - id: marketplace-no-log-reset-secret
+    languages: [javascript]
+    severity: ERROR
+    message: >-
+      Do not log the password-reset hash or the address it was issued for. The
+      hash authenticates the reset link, and logging the pair reintroduces the
+      account-enumeration oracle the flow was written to close.
+    metadata:
+      category: security
+      confidence: MEDIUM
+      references:
+        - migrations/20260301000000-create-admin.js
+        - migrations/20260301000100-create-shopOwner.js
+    patterns:
+      - pattern-either:
+          - pattern: console.$M(..., $ARG, ...)
+          - patterns:
+              - pattern: $L.$M(..., $ARG, ...)
+              - metavariable-regex:
+                  metavariable: $L
+                  regex: (?i)^(logger|log)$
+      - metavariable-regex:
+          metavariable: $ARG
+          regex: (?i)(resethash|reset_hash|resetpwd|resetdatereq)

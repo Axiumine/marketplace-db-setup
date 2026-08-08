@@ -1,0 +1,40 @@
+MONGO_DEV_UDBOWNER=
+MONGO_DEV_URW=
+MONGO_DEV_PWD=
+MONGO_DEV_AUTH_ADMIN=
+MONGO_DEV_DB=
+MONGO_DEV_CONN_STRING=
+SEED_DEMO=false
+
+# Qodana Cloud token (see qodana.sh). Never commit a real value here — this file is the
+# committed placeholder template; the real token lives only in the gitignored .env.
+QODANA_TOKEN=
+
+
+# T E S T   (optional — dedicated throwaway server/db for `yarn test`; DB is dropped)
+#
+# The suite assembles its URL from CONN_STRING + UDBOWNER + PWDDBOWNER + AUTH_ADMIN.
+# It uses the DB OWNER pair: it drops the database and the migrations create
+# collections, validators and indexes. The R/W pair below is not read by the suite.
+# Leave the whole block empty and the suite skips instead of running.
+
+# DB OWNER USER
+MONGO_TEST_UDBOWNER=
+MONGO_TEST_PWDDBOWNER=
+
+# R/W USER
+MONGO_TEST_UDBRW=
+MONGO_TEST_PWDDBRW=
+
+MONGO_TEST_AUTH_ADMIN=
+MONGO_TEST_DB=
+MONGO_TEST_CONN_STRING=
+
+# One ready-made URL, credentials and authSource already in it. Read by the suite and given
+# precedence OVER the four assembled pieces above — only the inline TEST_MONGO_URL, which is passed
+# on the command line and never stored, outranks it. Leave it EMPTY: the assembled form is what this
+# template is built around, and a stale value here silently wins over every edit made above it.
+# It exists in the template because it exists in the resolver, and a variable the code honours but
+# the template never names is one nobody knows to clear when it is the thing pointing the suite at
+# the wrong database.
+MONGO_TEST_URL=

@@ -1,0 +1,155 @@
+#-------------------------------------------------------------------------------#
+#               Qodana analysis is configured by qodana.yaml file               #
+#             https://www.jetbrains.com/help/qodana/qodana-yaml.html            #
+#-------------------------------------------------------------------------------#
+version: "1.0"
+
+# Full Ultimate inspection set: code quality + SAST / taint dataflow.
+# Ultimate & Ultimate Plus features unlock via QODANA_TOKEN (see .env, run via ./qodana.sh).
+profile:
+  name: qodana.recommended
+
+# Qodana for JS/TS — Ultimate-tier linter (no community JS variant exists). This repo is plain
+# JS (.js/.mjs), not TypeScript, but there is no separate "Qodana for JS" image; the JS/TS
+# linter covers both.
+# Docker images go under `image:`; `linter:` is for the linter *name* and makes the
+# CLI warn "has image value, please use --image param".
+# Tag must be a real image tag: only 2026.2, 2026.1, 2025.3, 2025.2, latest, and
+# the -eap variants are published.
+image: jetbrains/qodana-js:2026.2
+
+# ── SCA: third-party license audit (Ultimate Plus) ────────────────────────────
+# Scans npm/Yarn deps and surfaces license conflicts as problems. The project is
+# proprietary (package.json "UNLICENSED"), so Qodana's default compatibility
+# matrix already flags copyleft dependencies. Tighten per-project below if needed.
+raiseLicenseProblems: true
+
+# `keys` is THIS project's license, `allowed` the dependency licenses accepted
+# against it. The default matrix for a proprietary project flags every copyleft
+# dep as a Critical — correct for shipped software, wrong here: this is a
+# migration tool that runs on our own hosts against our own database, never
+# distributed, so the GPL's distribution trigger is never pulled.
+#
+# `keys` must carry the key Qodana derives, NOT the package.json string: it maps
+# "UNLICENSED" to PROPRIETARY-LICENSE, and the finding text says so verbatim.
+# Putting "UNLICENSED" here matches no project and the rule silently does nothing.
+#
+# MPL-2.0 covers lightningcss, which arrives only as `vitest -> vite -> lightningcss`
+# (`yarn why lightningcss` confirms that single path, same as every other repo on this
+# platform that runs vitest). It is a build/test-time devDependency: never imported by
+# the migrations/lib/setup sources, never present outside node_modules. MPL is per-file
+# copyleft and triggers on distributing *modified* covered files, which we neither
+# modify nor distribute.
+#
+# No `@axiumine/marketplace-common` entry here (unlike the seven backend
+# services): this repo has no dependency on it at all — it is pure migrate-mongo
+# migrations plus the mongodb driver, not application code (see package.json
+# dependencies). A dependencyOverrides entry pinned to a package that isn't installed
+# would just be dead configuration.
+licenseRules:
+  - keys: ["PROPRIETARY-LICENSE"]
+    allowed:
+      [
+        "PROPRIETARY-LICENSE",
+        "MPL-2.0",
+      ]
+
+# Vulnerable-dependency check (SCA) and taint/SAST run automatically as part of
+# the recommended profile on the Ultimate linter — no extra key required.
+
+# ── Quality gate: severity, then coverage ──────────────────────────────────────
+# Severity first: without it the repo has no failure condition at all, because a scan
+# prints "✗ Found N new problems" and still exits 0 unless something under
+# failureConditions says otherwise. critical/high only — moderate stays advisory.
+#
+# ⚠️ testCoverageThresholds is new, and it reverses what this block used to argue. The
+# old text said a 100% gate here "would mostly measure whether every migration file got
+# added to the suite's MIGRATION_FILES list, not whether the schema is correct". That was
+# a fair reading of a repo whose only suite was the end-to-end replay, and it stopped
+# being one when test/migrationGuards.test.mjs and test/mongoUrl.test.mjs landed: the 16
+# statements the replay structurally cannot reach are the `IndexNotFound` re-throws, the
+# SEED_DEMO branches and the URL assembly, every one of them a real path with a real way
+# to be wrong. The repo sits at 100% on all four metrics, like the other thirteen.
+#
+# The lcov it reads comes from `yarn test:cov` — qodana.sh runs it, or reuses the report
+# the calling hook just wrote when SKIP_TESTS=1.
+failureConditions:
+  severityThresholds:
+    critical: 0
+    high: 0
+  testCoverageThresholds:
+    total: 100 # whole project
+    fresh: 100 # new / changed code
+
+#Enable inspections
+#include:
+#  - name: <SomeEnabledInspectionId>
+
+# ── Disabled inspections ──────────────────────────────────────────────────────
+# semgrep/vendor holds third-party semgrep rulesets, refreshed by its own
+# refresh.sh — not our code. secrets.yml is a catalogue of credential-detection
+# *patterns*, so it is full of example passwords and API keys by design, and
+# HardcodedPasswords reads those literals as real secrets. False positives on a
+# file whose entire purpose is to contain password-shaped strings.
+#
+# Scoped to the path, NOT disabled globally: a genuine hardcoded secret anywhere
+# else in this repo must still fail the build. Do not widen this to the whole
+# semgrep/ dir either — custom.yml is ours and should stay inspected.
+#
+# setup/mongodb.js is the second exclusion and a different kind of false positive: it is not
+# JavaScript. It is a **mongosh runbook** — a transcript of statements you paste into a mongo
+# shell to provision users, dump/restore and empty a database — that carries a .js extension
+# because that is what mongosh scripts are called. Its sibling setup/redis.txt is the same kind
+# of file and escapes all of this only by being named .txt.
+#
+# Every one of the four rules below fires on mongosh syntax that is legal there and meaningless
+# as JavaScript, so all 15 High findings in the first scan of this repo came from this one file:
+#
+#   UnnecessaryLabelJS (6) + BadExpressionStatementJS (30) — `use dbMarketplaceDev` is a mongosh
+#     command. A JS parser reads it as the label `use:` followed by the bare expression
+#     `dbMarketplaceDev`, and reports both halves.
+#   CommaExpressionJS (8) — the shell's multi-argument helper lines parse as comma expressions.
+#   ThisExpressionReferencesGlobalObjectJS (1) — top-level `this` is the shell's db handle.
+#
+# Scoped to the one file, NOT to setup/ and NOT globally: HardcodedPasswords in particular must
+# keep firing here, because this runbook really does carry live credentials on 7 lines (see
+# CLAUDE.md, *Cautions*) and silencing the whole file would hide the one finding worth having.
+#
+# ⚠️ This is a symptom fix. The root cause is the extension, and the next JS inspection added to
+# the profile will need a fifth entry. Renaming the file to setup/mongodb.txt — matching
+# setup/redis.txt — removes the whole class at once, and is the better fix whenever the doc
+# references and the `find … -name '*.js'` glob in package.json's semgrep script can be updated
+# with it.
+#
+# ⚠️ There is no DuplicatedCode exclusion here, and adding one back would be a regression. The scan
+# once reported four such findings inside migrations/ — the 13 `create-<product-type>` validators,
+# the 5 old-shop-collection migrations, `create-admin` vs `create-shopOwner`, and `create-shopOwner` vs
+# `alter-shopOwner-emailVerify` — and they were excluded on the grounds that a migration is
+# self-contained by rule and the duplication therefore unfixable. That rule was lifted (there is no
+# database on this platform that cannot be dropped and replayed), the shapes moved to lib/schemas/,
+# and the four findings went away because the duplication did. DuplicatedCode now fires over
+# migrations/ like everywhere else. If it fires again, the shape belongs in lib/schemas/ —
+# read that directory's README.md before reaching for an exclusion.
+exclude:
+  - name: HardcodedPasswords
+    paths:
+      - semgrep/vendor
+  - name: UnnecessaryLabelJS
+    paths:
+      - setup/mongodb.js
+  - name: BadExpressionStatementJS
+    paths:
+      - setup/mongodb.js
+  - name: CommaExpressionJS
+    paths:
+      - setup/mongodb.js
+  - name: ThisExpressionReferencesGlobalObjectJS
+    paths:
+      - setup/mongodb.js
+
+#Execute shell command before Qodana execution (Applied in CI/CD pipeline)
+#bootstrap: sh ./prepare-qodana.sh
+
+#Install IDE plugins before Qodana execution (Applied in CI/CD pipeline)
+#plugins:
+#  - id: <plugin.id> #(plugin id can be found at https://plugins.jetbrains.com)

@@ -1,0 +1,34 @@
+.idea/
+node_modules/
+.env
+
+# The two manual runbooks under setup/. They are working notes rather than project files: they carry
+# real database users, their passwords and the internal hostnames those live on, written out ready to
+# paste into a shell. Nothing in the repo reads them, so untracking costs nothing, and the remote is
+# public — a tracked copy is one push away from publishing every credential in it. Keep them on disk,
+# keep them out of git.
+setup/mongodb.js
+setup/redis.txt
+
+# Visual studio
+.vscode
+.vs
+
+# Semgrep's own output (see semgrep/README.md)
+semgrep.sarif
+
+# `yarn test:cov` output, gated at 100% on every metric in vitest.config.mjs and read again by
+# qodana.sh under SKIP_TESTS=1. This comment used to say the number was "inspected, not gated";
+# the two unit suites closed the branches the replay could not reach and the threshold went in.
+coverage/
+
+# Stryker (yarn test:mutation)
+reports/
+.stryker-tmp/
+
+# Qodana — scan results (SARIF + report), written by .githooks/pre-commit and pre-push.
+# They pass --results-dir .qodana/results so the SARIF is readable from the repo root
+# after a failed gate, rather than under ~/.cache/JetBrains/Qodana/<project-hash>/.
+.qodana/
+# GitNexus index storage. The committed part is .gitnexusrc at the repo root.
+.gitnexus/
