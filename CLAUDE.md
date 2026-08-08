@@ -42,10 +42,11 @@ data. Adding one word of a second language is a regression, not a style nit.
 |---|---|
 | `migrate-mongo-config.js` | Config. Builds an authenticated URL from `.env` (`MONGO_DEV_*`); `changelog` tracks applied migrations. |
 | `migrations/*.js` | One migration per file, applied in filename (timestamp) order. `<ts>-create-<coll>.js` = collection + validator + indexes. |
-| `lib/schemas/*.js` | The validator shapes every migration is built from (`account`, `collection`, `geo`, `shopOwner`, `user`, `company`, `item`, `itemCategory`), each builder carrying **every** state its collection has had. Mostly `$jsonSchema`, not always — `user.js` always returns an `$and` pair, `company.js` returns one once `publicFields` is on. **Read `lib/schemas/README.md` before touching it**: an edit here changes what an already-applied migration means. |
+| `lib/schemas/*.js` | The validator shapes every migration is built from (`account`, `collection`, `encrypted`, `geo`, `admin`, `shopOwner`, `user`, `company`, `item`, `itemCategory`), each builder carrying **every** state its collection has had. Mostly `$jsonSchema`, not always — `user.js` always returns an `$and` pair, `company.js` returns one once `publicFields` is on. **Read `lib/schemas/README.md` before touching it**: an edit here changes what an already-applied migration means. `encrypted.js` is the ADR-029 one — it turns a personal field's shape into `bsonType: 'binData'`, which is all a validator can say about a ciphertext. |
 | `migrations/*-seed-demo*.js` | Optional demo seed, **two** files. No-op unless `SEED_DEMO=true`. |
+| `lib/encryption.js` | The CSFLE half (ADR-029): opens a `ClientEncryption` against the master key at `CSFLE_MASTER_KEY_PATH`, mints or reuses one data key per collection in `<db>.__keyVault`, and encrypts stored documents in place so an `alter-*-encrypted` migration can convert a populated collection. |
 | `lib/mongoUrl.js` | The `://user:pwd@` + `authSource` assembly, shared by the config (`MONGO_DEV_*`) and the tests (`MONGO_TEST_*`) so the two cannot drift. |
-| `test/` | Five vitest suites — the migration replay plus four unit suites. Layout and traps: `REPO.md`. |
+| `test/` | Six vitest suites — the migration replay plus five unit suites. Layout and traps: `REPO.md`. |
 | `vitest.config.mjs` · `vitest.mutation.config.mjs` · `stryker.config.mjs` | Suite configs. Coverage gated at 100% on every metric; Stryker `thresholds.break: 100`, `concurrency: 1` (one real database). |
 | `qodana.yaml` / `qodana.sh` | Scan config and runner. Critical 0 / high 0, coverage 100 total / 100 fresh, SCA and license checks. |
 | `.githooks/pre-commit` · `pre-push` | Gates. What runs when, and why: `REPO.md`. |
