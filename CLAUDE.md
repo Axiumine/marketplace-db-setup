@@ -53,7 +53,7 @@ data. Adding one word of a second language is a regression, not a style nit.
 | `qodana.yaml` / `qodana.sh` | Scan config and runner. Critical 0 / high 0, coverage 100 total / 100 fresh, SCA and license checks. |
 | `.githooks/pre-commit` · `pre-push` | Gates. What runs when, and why: [`REPO.md`](./REPO.md). |
 | `env` | Committed template for `.env`. `.env` itself is gitignored — dev Mongo credentials. |
-| `setup/mongodb.js` · `setup/redis.txt` | Manual one-off runbooks (DB users, dump/restore, Redis ACL). **Gitignored** — they hold real users, passwords and internal hostnames. A clone does not get them; ask whoever runs the cluster. |
+| `setup/mongodb.js` · `setup/redis.txt` | Manual one-off runbooks (DB users, dump/restore, Redis ACL). **Gitignored** — they hold real users, passwords and internal hostnames. A clone does not get them. |
 
 ## Running migrations
 
@@ -318,9 +318,7 @@ mongoose getters never run and the raw driver value reaches GraphQL, where
 **git**, branch `main`, remote `origin` → `https://github.com/Axiumine/marketplace-db-setup` (**public**).
 
 ⚠️ **The remote is public and nothing has been pushed to it yet.** The history is a single commit by
-design: the two runbooks under `setup/` used to be tracked and carried live credentials, so they were
-untracked and the twenty commits holding earlier copies were collapsed into one. There is no second
-revision to leak from. Before the first push, read what a public reader would get: every migration, every
+design, so there is no second revision to leak from. Before the first push, read what a public reader would get: every migration, every
 validator and the `env` template are fine, and nothing else should be assumed to be.
 
 - **Never commit on `main`.** Branch first: `git switch -c <type>/<slug>`. Merging is the user's call.
