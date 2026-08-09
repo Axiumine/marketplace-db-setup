@@ -25,7 +25,7 @@ import { createRequire } from 'node:module';
  * ⚠️ `require`, not `import()`. migrate-mongo loads this file through node's own loader; an
  * `import()` here would go through vite and hand v8 a second script for the same path with
  * different byte offsets, and merging coverage reports whose ranges do not line up drops them
- * instead of unioning them. The long form of this is at the head of test/migrationGuards.test.mjs.
+ * instead of unioning them. The long form of this is at the head of test/migrations.test.mjs.
  */
 const require = createRequire(import.meta.url);
 const CONFIG = require.resolve('../migrate-mongo-config.js');

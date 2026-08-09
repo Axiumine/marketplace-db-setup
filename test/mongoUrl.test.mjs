@@ -15,7 +15,7 @@ import { createRequire } from 'node:module';
 // ⚠️ `require`, not `import`. `migrate-mongo-config.js` pulls this file in through node's own
 // loader, so an ESM import here would hand v8 a second, vite-transformed script for the same path —
 // and two coverage reports with mismatched byte offsets do not merge into a union, they lose
-// ranges. Same reasoning, and the same measurements, as the note in `migrationGuards.test.mjs`.
+// ranges. Same reasoning, and the same measurements, as the note in `migrations.test.mjs`.
 const { buildMongoUrl, required } = createRequire(import.meta.url)('../lib/mongoUrl.js');
 
 // The label object the real callers pass, so an error message here reads exactly like the one a

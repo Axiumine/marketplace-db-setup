@@ -70,10 +70,10 @@ licenseRules:
 # old text said a 100% gate here "would mostly measure whether every migration file got
 # added to the suite's MIGRATION_FILES list, not whether the schema is correct". That was
 # a fair reading of a repo whose only suite was the end-to-end replay, and it stopped
-# being one when test/migrationGuards.test.mjs and test/mongoUrl.test.mjs landed: the 16
-# statements the replay structurally cannot reach are the `IndexNotFound` re-throws, the
-# SEED_DEMO branches and the URL assembly, every one of them a real path with a real way
-# to be wrong. The repo sits at 100% on all four metrics, like the other thirteen.
+# being one when test/encryption.test.mjs and test/mongoUrl.test.mjs landed: the statements
+# the replay structurally cannot reach are the four CSFLE guards, the SEED_DEMO-off branch
+# and the URL assembly, every one of them a real path with a real way to be wrong. The repo
+# sits at 100% on all four metrics, like the other thirteen.
 #
 # The lcov it reads comes from `yarn test:cov` — qodana.sh runs it, or reuses the report
 # the calling hook just wrote when SKIP_TESTS=1.
@@ -117,7 +117,7 @@ failureConditions:
 #
 # Scoped to the one file, NOT to setup/ and NOT globally: HardcodedPasswords in particular must
 # keep firing here, because this runbook really does carry live credentials on 7 lines (see
-# CLAUDE.md, *Cautions*) and silencing the whole file would hide the one finding worth having.
+# CLAUDE.md, *Secrets*) and silencing the whole file would hide the one finding worth having.
 #
 # ⚠️ This is a symptom fix. The root cause is the extension, and the next JS inspection added to
 # the profile will need a fifth entry. Renaming the file to setup/mongodb.txt — matching
@@ -125,14 +125,13 @@ failureConditions:
 # references and the `find … -name '*.js'` glob in package.json's semgrep script can be updated
 # with it.
 #
-# ⚠️ There is no DuplicatedCode exclusion here, and adding one back would be a regression. The scan
-# once reported four such findings inside migrations/ — the 13 `create-<product-type>` validators,
-# the 5 old-shop-collection migrations, `create-admin` vs `create-shopOwner`, and `create-shopOwner` vs
-# `alter-shopOwner-emailVerify` — and they were excluded on the grounds that a migration is
-# self-contained by rule and the duplication therefore unfixable. That rule was lifted (there is no
-# database on this platform that cannot be dropped and replayed), the shapes moved to lib/schemas/,
-# and the four findings went away because the duplication did. DuplicatedCode now fires over
-# migrations/ like everywhere else. If it fires again, the shape belongs in lib/schemas/ —
+# ⚠️ There is no DuplicatedCode exclusion here, and adding one would be a regression. Migrations are
+# the one place in this repo where copying a shape is tempting — three collections you log in as share
+# one credential block, three carry the same street address, two carry the same GeoJSON point — and the
+# argument for silencing the inspection is always the same one: a migration is self-contained by rule,
+# so the duplication is unfixable. That rule does not hold here (there is no database on this platform
+# that cannot be dropped and replayed), which is why every shape lives in lib/schemas/ and every
+# migration is a call. If DuplicatedCode fires over migrations/, the shape belongs in lib/schemas/ —
 # read that directory's README.md before reaching for an exclusion.
 exclude:
   - name: HardcodedPasswords

@@ -74,20 +74,6 @@ exports[`the full index set of every collection is frozen > company indexes 1`] 
   },
   {
     "key": {
-      "_fts": "text",
-      "_ftsx": 1
-    },
-    "name": "search_text",
-    "weights": {
-      "description": 1,
-      "publicName": 10
-    },
-    "default_language": "english",
-    "language_override": "language",
-    "textIndexVersion": 3
-  },
-  {
-    "key": {
       "published": 1,
       "deleted": 1,
       "publicName": 1
@@ -102,6 +88,20 @@ exports[`the full index set of every collection is frozen > company indexes 1`] 
       "publicName": 1
     },
     "name": "published_city_publicName"
+  },
+  {
+    "key": {
+      "_fts": "text",
+      "_ftsx": 1
+    },
+    "name": "search_text",
+    "weights": {
+      "description": 1,
+      "publicName": 10
+    },
+    "default_language": "english",
+    "language_override": "language",
+    "textIndexVersion": 3
   }
 ]"
 `;
@@ -131,20 +131,6 @@ exports[`the full index set of every collection is frozen > item indexes 1`] = `
   },
   {
     "key": {
-      "_fts": "text",
-      "_ftsx": 1
-    },
-    "name": "search_text",
-    "weights": {
-      "description": 1,
-      "name": 10
-    },
-    "default_language": "english",
-    "language_override": "language",
-    "textIndexVersion": 3
-  },
-  {
-    "key": {
       "idCompany": 1,
       "published": 1,
       "deleted": 1,
@@ -160,6 +146,20 @@ exports[`the full index set of every collection is frozen > item indexes 1`] = `
       "name": 1
     },
     "name": "idCategory_published_name"
+  },
+  {
+    "key": {
+      "_fts": "text",
+      "_ftsx": 1
+    },
+    "name": "search_text",
+    "weights": {
+      "description": 1,
+      "name": 10
+    },
+    "default_language": "english",
+    "language_override": "language",
+    "textIndexVersion": 3
   }
 ]"
 `;
@@ -811,7 +811,7 @@ exports[`the full validator of every collection is frozen > shopOwner validator 
               },
               "postalCode": {
                 "bsonType": "binData",
-                "description": "postal code, encrypted — the exactly-5 rule is gone with the plaintext"
+                "description": "postal code, encrypted — the exactly-5 rule cannot survive the ciphertext"
               },
               "city": {
                 "bsonType": "string",
@@ -819,7 +819,7 @@ exports[`the full validator of every collection is frozen > shopOwner validator 
               },
               "province": {
                 "bsonType": "binData",
-                "description": "province, encrypted — the exactly-2 rule is gone with the plaintext"
+                "description": "province, encrypted — the exactly-2 rule cannot survive the ciphertext"
               },
               "position": {
                 "bsonType": "binData",
@@ -1069,7 +1069,7 @@ exports[`the full validator of every collection is frozen > user validator 1`] =
                 },
                 "postalCode": {
                   "bsonType": "binData",
-                  "description": "postal code, encrypted — the exactly-5 rule is gone with the plaintext"
+                  "description": "postal code, encrypted — the exactly-5 rule cannot survive the ciphertext"
                 },
                 "city": {
                   "bsonType": "binData",
@@ -1077,7 +1077,7 @@ exports[`the full validator of every collection is frozen > user validator 1`] =
                 },
                 "province": {
                   "bsonType": "binData",
-                  "description": "province, encrypted — the exactly-2 rule is gone with the plaintext"
+                  "description": "province, encrypted — the exactly-2 rule cannot survive the ciphertext"
                 },
                 "position": {
                   "bsonType": "binData",

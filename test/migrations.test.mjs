@@ -1,6 +1,6 @@
 // Integration tests for the migrate-mongo migrations.
 // Runs the REAL migrations against a MongoDB and asserts the resulting DB state:
-// collections, validators, indexes, validation enforcement, seed, reversibility.
+// collections, validators, indexes, validation enforcement, the demo seed, reversibility.
 //
 // Connection is resolved from .env — no need to pass it on the command line.
 // Precedence (URL):  TEST_MONGO_URL (inline)  >  MONGO_TEST_URL (.env, one ready-made
@@ -20,6 +20,7 @@
 // fill in the MONGO_TEST_* block rather than letting this fall through to the dev owner,
 // which on a single-db dev cluster is not authorized on the test DB and fails every test
 // on the first dropDatabase().
+//
 // This file is ESM (.mjs) because migrate-mongo is ESM from v12 on. Its CommonJS
 // wrapper is a Proxy whose every property access returns a Promise, so under
 // `require` the whole API reads as undefined — `mm.config.set` throws
@@ -27,22 +28,22 @@
 // declares `moduleSystem: 'commonjs'` and migrate-mongo still loads them.
 //
 // Runner: vitest (see vitest.config.mjs), not node:test — kept for parity with the
-// seven backend services, which all run vitest. node:test's before()/after() map to
+// nine backend services, which all run vitest. node:test's before()/after() map to
 // vitest's beforeAll()/afterAll(), NOT beforeEach()/afterEach(): this suite's before/after
 // drop and replay the whole database ONCE for the file, and getting the mapping wrong
 // would drop and re-migrate the database around every single test instead.
-// assert/strict is kept as-is — vitest runs node:assert fine, and rewriting every
-// assertion to expect() would be churn with no behavioural gain.
 //
-// ⚠️ The old shop collection and its per-shop taxonomy collection were dropped outright on
-// 2026-08-04, along with every migration that created or altered either (see CLAUDE.md). This
-// suite used to spend most of its length on the shop: a 2dsphere geo index, five wholesale
-// collMods, a required-field backfill, and the embedded-company extraction that emptied the
-// collection twice over. None of that exists to test any more. What is left below covers
-// `admin`, `shopOwner` and `company` only.
-// `expect` alongside assert/strict, and only for the two snapshot tests: `toMatchSnapshot` has no
-// node:assert equivalent, and hand-rolling one would mean writing the file-management half of it.
-// Every other assertion here stays on node:assert/strict — see the header note above.
+// ⚠️ **Every migration here CREATES a collection; none alters one.** Each of the six
+// collections is declared once, in its final shape, validator and indexes together — there
+// is no widen → backfill → narrow ladder anywhere in this directory and no `collMod` at
+// all. So there is no intermediate state for this suite to walk through: the migrations are
+// applied once at the top, every assertion below reads the one state they produce, and the
+// only `down`s in the file are the seed's and the final teardown. A test that needs to pop
+// a migration to see what it is testing is a sign an alter has crept back in.
+//
+// `expect` alongside assert/strict, and only for the two snapshot tests: `toMatchSnapshot`
+// has no node:assert equivalent, and hand-rolling one would mean writing the file-management
+// half of it. Every other assertion here stays on node:assert/strict.
 import { test, beforeAll, afterAll, expect } from 'vitest';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -66,7 +67,7 @@ const require = createRequire(import.meta.url);
  * not line up does not union them, it drops them. The symptom was a run that reported
  * lib/mongoUrl.js at 90.9% statements / 50% branches with lines 13-28 — both function bodies —
  * uncovered, roughly one run in six, while the file is exhaustively tested by
- * test/mongoUrl.test.mjs. Same note, same measurements, as the one in migrationGuards.test.mjs.
+ * test/mongoUrl.test.mjs. Same note, same measurements, as the one in test/migrationCalls.test.mjs.
  */
 const { buildMongoUrl } = require('../lib/mongoUrl.js');
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -114,49 +115,47 @@ const MIGRATIONS_DIR = path.join(__dirname, '..', 'migrations');
 
 const APP_COLLECTIONS = ['admin', 'shopOwner', 'company', 'user', 'item', 'itemCategory'];
 
-// non-_id indexes expected per collection
+// The one migration that writes documents rather than declaring a collection, and the only one
+// gated on an environment flag.
+const SEED_FILE = '20260301000600-seed-demo.js';
+const SEED_PATH = path.join(MIGRATIONS_DIR, SEED_FILE);
+
+// non-_id indexes expected per collection, by the migration that creates them.
 const EXPECTED_INDEXES = {
+  // 20260301000000 — the shared `login.email_unique`, from the constant all three login collections
+  // build from. It works only because `login.email` is DETERMINISTIC ciphertext: a unique index over
+  // random ciphertext constrains nothing, since every insert of one address produces different bytes.
   admin: ['login.email_unique'],
-  // 20260804000000 — the same single index the other two login collections carry, from the same
-  // shared constant. No 2dsphere over `addresses.position`: nothing queries customers by distance.
+  // 20260301000300 — the same single index, and no 2dsphere over `addresses.position`: nothing
+  // queries customers by distance, which is what makes encrypting that point free.
   user: ['login.email_unique'],
   shopOwner: [
+    // 20260301000100 — the login unique, one index per sort column the operator table exposes, and
+    // the chart's unfiltered `registeredAt` range, which no tbl_active_* index can seek into because
+    // they all lead with deleted/disabled and the chart bounds neither.
     'login.email_unique',
-    // 20260801000100 — one per sort column the operator table exposes.
     'tbl_active_registeredAt', 'tbl_active_lastName_firstName', 'tbl_active_firstName', 'tbl_active_city',
-    // 20260802000100 — the chart's unfiltered `registeredAt` range, which no tbl_active_* index
-    // can seek into because they all lead with deleted/disabled and the chart bounds neither.
     'registeredAt_series',
   ],
-  // 20260803000000 — `vatNumber_unique` / `certifiedEmail_unique` are global uniques (one VAT number, one certified email,
-  // per company, whoever registered it); `idShopOwner_list` backs the only list query on the
-  // collection. All three were created directly on `company` — see CLAUDE.md for the now-removed
-  // old shop collection's history the first two carried before this collection existed.
-  //
-  // 20260804010000 adds the other three, when the company stopped being only a legal record and
-  // became the shop a customer browses. `slug_unique` is the URL; `address.position_2dsphere` is
-  // what `companiesNearby` and the map run on, and the create migration explicitly deferred it on
-  // the grounds that nothing queried companies by distance — something does now; `published_list`
-  // is the two equality predicates every public read carries.
-  // 20260804040000 adds the last three: the company half of the public text search, and the two
-  // compound indexes that make /shops and /shops/:city index walks instead of blocking sorts. Note
-  // `published_list` is still here — it is a strict prefix of `published_publicName` and therefore
-  // redundant, and that migration argues why it is left installed rather than dropped.
+  // 20260301000200 — nine, in one migration, because the collection is declared once.
+  // `vatNumber_unique` / `certifiedEmail_unique` are global uniques (one VAT number, one certified
+  // email per company, whoever registered it); `idShopOwner_list` backs the owner-facing list;
+  // `slug_unique` is the URL; `address.position_2dsphere` is what `companiesNearby` and the map run
+  // on; `published_list` is the two equality predicates every public read carries; `search_text` is
+  // the company half of the public search; and the two `publicName` compounds make /shops and
+  // /shops/:city index walks rather than blocking sorts.
   company: [
     'vatNumber_unique', 'certifiedEmail_unique', 'idShopOwner_list',
     'slug_unique', 'address.position_2dsphere', 'published_list',
     'search_text', 'published_publicName', 'published_city_publicName',
   ],
-  // 20260804020000 — a plain unique slug (required here, so no null keys and no partial filter) and
+  // 20260301000400 — a plain unique slug (required here, so no null keys and no partial filter) and
   // the level+order index the two listing reads walk.
   itemCategory: ['slug_unique', 'idParent_position'],
-  // 20260804030000 — the owner's catalogue, the per-company slug rule that doubles as the
+  // 20260301000500 — the owner's catalogue, the per-company slug rule that doubles as the
   // /shop/:slug/item/:itemSlug lookup, the public shop page, the category browse, and the text index.
-  // ⚠️ The public shop page and category browse are the `_name` pair, not the three-key indexes that
-  // migration created: `20260804050000` replaced both, because the listings sort by `name` and a sort
-  // key absent from the index is a blocking SORT over every match. The short forms are dropped there,
-  // being exact prefixes of these — so naming them here would assert the state of a superseded
-  // migration.
+  // ⚠️ The two listing indexes are the FOUR-key `_name` forms. Their three-key prefixes are not
+  // installed alongside them — see the head of that migration.
   item: [
     'idCompany_list', 'idCompany_slug_unique', 'idCompany_published_name', 'idCategory_published_name', 'search_text',
   ],
@@ -164,10 +163,9 @@ const EXPECTED_INDEXES = {
 
 const MIGRATION_FILES = fs.readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith('.js')).sort();
 
-// Both seed migrations are gated on this, so every count they touch has two right answers and the
+// The demo seed is gated on this, so the three counts it touches have two right answers and the
 // suite has to be run twice (`yarn test` and `yarn test:seed`) to see both. Read once here rather
-// than spelled out at each call site: the two seeds share one flag, and a test that checked only
-// one of them would pass under a half-applied seed.
+// than at each call site.
 const SEEDED = process.env.SEED_DEMO === 'true';
 
 if (!URL) {
@@ -202,12 +200,11 @@ if (!URL) {
 
     // ---- CSFLE (ADR-029) ---------------------------------------------------
     //
-    // The four 20260808* migrations rewrite stored personal fields as ciphertext, and they need the
-    // 96-byte master key to do it — but only when they find a document to convert. Under `yarn test`
-    // that is never: the database was just dropped and is replayed empty. Under `yarn test:seed` it
-    // is the two demo seeds, and then the conversion runs for real, against a real key, exactly as
-    // it will against dev. Minting a throwaway key here rather than branching on `SEED_DEMO` keeps
-    // both invocations on one path, and makes the seeded run the thing that proves the conversion.
+    // Every collection here declares its personal fields `bsonType: 'binData'` in its very first
+    // validator, so the only migration that needs a master key is the one that writes documents: the
+    // demo seed encrypts field by field before it inserts. Under `yarn test` that never runs through
+    // migrate-mongo; the seeded-up test near the foot of this file drives it by hand, with the flag
+    // forced on, so BOTH invocations exercise the real ClientEncryption against a real 96-byte key.
     //
     // ⚠️ Both variables are OVERWRITTEN, not defaulted, and that is a safety rule rather than
     // tidiness. `.env` may well carry the real pair — dotenv has already loaded it — and honouring
@@ -231,14 +228,16 @@ if (!URL) {
   const collNames = async () => (await db.listCollections().toArray()).map((c) => c.name);
   const collInfo = async (name) => (await db.listCollections({ name }).toArray())[0];
 
+  const indexKeys = async (coll, name) =>
+    (await db.collection(coll).indexes()).find((i) => i.name === name)?.key;
+
   // Two collections have a validator that is not a bare `$jsonSchema` but
   // `$and: [{ $jsonSchema }, { $expr }]`, because each carries one rule JSON Schema cannot state at
-  // all. On `user` it is "defaultAddress points into this document's own addresses"; on `company`,
-  // since 20260804010000, it is "a published company has a slug and a publicName". Both are
-  // cross-field, and a collection validator accepts any query expression, so the two clauses ride
-  // together. Unwrapping is done here once rather than at each call site, and it deliberately throws
-  // rather than returning undefined if a collection ever has neither — a silently undefined schema
-  // would pass every assertion below.
+  // all. On `user` it is "defaultAddress points into this document's own addresses"; on `company` it
+  // is "a published company has a slug and a publicName". Both are cross-field, and a collection
+  // validator accepts any query expression, so the two clauses ride together. Unwrapping is done here
+  // once rather than at each call site, and it deliberately throws rather than returning undefined if
+  // a collection ever has neither — a silently undefined schema would pass every assertion below.
   const jsonSchemaOf = (validator) => {
     if (validator.$jsonSchema) return validator.$jsonSchema;
     return validator.$and.find((clause) => clause.$jsonSchema).$jsonSchema;
@@ -247,52 +246,40 @@ if (!URL) {
   // ---- helpers to build minimal VALID documents -----------------------------
 
   /**
-   * Stored ciphertext, in the shape the four 20260808* migrations leave behind: BSON binData,
-   * subtype 6.
+   * Stored ciphertext, in the shape the platform writes: BSON binData, subtype 6.
    *
    * The bytes are not a real CSFLE blob and do not need to be. Everything the fixtures below
    * exercise happens server-side — `bsonType: 'binData'` accepts the value or refuses it, and a
    * unique index treats two different byte strings as two different keys — and the server never
    * looks inside subtype 6. Minting real ciphertext would make every fixture async, and every one of
    * the sixty-odd `{ ...validCompany(), … }` call sites below with it, for a property no assertion
-   * here reads. The real round-trip is the last test in this file, against a real key.
-   *
-   * ⚠️ A value built here must NOT be in the collection when a `*-encrypted` migration's `down()`
-   * runs: `decryptStored` selects on subtype 6 and would hand these bytes to libmongocrypt, which
-   * refuses them. The two down-ladder tests below therefore plant their document *after* those four
-   * steps, in plaintext, under the validator they have just restored — which is also the more
-   * faithful thing for a test of a pre-encryption migration to do.
+   * here reads. The real thing is driven once, against a real key, by the seeded-up test at the foot
+   * of this file.
    */
   const cipher = () => new Binary(Buffer.from(`ciphertext-${uid()}`), Binary.SUBTYPE_ENCRYPTED);
 
-  const validAdmin = ({ encrypted = true } = {}) => {
-    const n = uid();
-    const text = (value) => (encrypted ? cipher() : value);
-    return {
-      _id: new ObjectId(),
-      // Both names and the login address are ciphertext since 20260808000000. `password` is not: a
-      // bcrypt hash is not personal data, and it is compared by the application, never by a query.
-      login: { email: text(`a${n}@t.co`), password: 'x'.repeat(60) },
-      personalData: { firstName: text('Op'), lastName: text('Erator') },
-    };
-  };
+  // Both names and the login address are ciphertext. `password` is not: a bcrypt hash is not personal
+  // data, and it is compared by the application, never by a query.
+  const validAdmin = () => ({
+    _id: new ObjectId(),
+    login: { email: cipher(), password: 'x'.repeat(60) },
+    personalData: { firstName: cipher(), lastName: cipher() },
+  });
 
-  // `published: false` is in here rather than at the call sites because 20260804010000 put it in
-  // `required` — a fixture without it stopped being a valid company, and every one of the two dozen
-  // `accepts('company', …)` assertions below would have started failing for a reason that has
-  // nothing to do with what each of them is testing.
-  const validCompany = ({ encrypted = true } = {}) => {
+  // `published: false` is in here rather than at the call sites because it is in `required` — a
+  // fixture without it is not a valid company, and every one of the two dozen `accepts('company', …)`
+  // assertions below would fail for a reason that has nothing to do with what each is testing.
+  const validCompany = () => {
     const n = uid();
-    const text = (value) => (encrypted ? cipher() : value);
     return {
       _id: new ObjectId(),
       idShopOwner: new ObjectId(),
       // ⚠️ `contactPerson` and `administrator` are the only two encrypted here, and the other
       // fourteen are in the clear on purpose: a company is a legal entity, and its VAT number,
       // certified email and registry extract are a matter of public record. These two are the names
-      // of two people. See the head of 20260808000200-alter-company-encrypted.js.
-      legalName: 'R', vatNumber: n.padStart(11, '0'), contactPerson: text('Contact P'),
-      administrator: text('Admin A'), certifiedEmail: `certified${n}@example.com`, registryExtract: 'v.pdf',
+      // of two natural persons. See the head of lib/schemas/company.js.
+      legalName: 'R', vatNumber: n.padStart(11, '0'), contactPerson: cipher(),
+      administrator: cipher(), certifiedEmail: `certified${n}@example.com`, registryExtract: 'v.pdf',
       address: {
         street: 'Via', postalCode: '24030', city: 'C', province: 'BG',
         // GeoJSON order, [lng, lat], and doubles — the shape every collection with an address
@@ -322,37 +309,43 @@ if (!URL) {
     };
   };
 
-  /**
-   * `encrypted: false` builds the same document in PLAINTEXT.
-   *
-   * It exists for the tests that pop the 20260808* migrations off before planting anything: under
-   * the restored validator the encrypted form is a rejected write, and under the resting validator
-   * the plaintext form is. There is no document that satisfies both, which is the honest shape of a
-   * migration that changes a field's TYPE rather than adding or removing one.
-   */
-  const validShopOwner = (emailVerify, { encrypted = true } = {}) => {
-    const n = uid();
-    const text = (value) => (encrypted ? cipher() : value);
+  const validShopOwner = (emailVerify) => {
     const doc = {
       _id: new ObjectId(),
-      login: { email: text(`i${n}@t.co`), password: 'x'.repeat(60) },
+      login: { email: cipher(), password: 'x'.repeat(60) },
       personalData: {
         // ⚠️ `firstName`, `lastName` and `address.city` stay in the CLEAR, and are the only personal
         // fields on this collection that do. They are the sort keys of tbl_active_lastName_firstName,
         // tbl_active_firstName and tbl_active_city and the targets of the operator table's `/^term/i`
         // prefix search, and no CSFLE algorithm preserves an ordering or a prefix — deterministic
         // preserves equality and nothing else. Encrypting them would not slow the operator table
-        // down, it would silently falsify it. See 20260808000100-alter-shopOwner-encrypted.js.
+        // down, it would silently falsify it. See lib/schemas/shopOwner.js.
         firstName: 'M', lastName: 'R',
-        birth: { date: text(new Date('1970-11-24T00:00:00Z')) },
-        address: { street: text('Via'), postalCode: text('24030'), city: 'C', province: text('BG') },
-        contacts: { mobile: text('333'), email: text(`c${n}@t.co`) },
+        birth: { date: cipher() },
+        address: { street: cipher(), postalCode: cipher(), city: 'C', province: cipher() },
+        contacts: { mobile: cipher(), email: cipher() },
       },
       registeredAt: new Date(),
     };
     if (emailVerify !== undefined) doc.emailVerify = emailVerify;
     return doc;
   };
+
+  // One element of `user.addresses`. Every member is ciphertext except `_id`, which MUST stay an
+  // ObjectId — the collection's `$expr` clause compares `defaultAddress` against these ids, and
+  // random ciphertext differs on every encryption, so encrypting either side would refuse every write.
+  const addressElement = (over = {}) => ({
+    _id: new ObjectId(),
+    street: cipher(), postalCode: cipher(), city: cipher(), province: cipher(),
+    ...over,
+  });
+
+  const validUser = (over = {}) => ({
+    _id: new ObjectId(),
+    login: { email: cipher(), password: 'x'.repeat(60) },
+    registeredAt: new Date(),
+    ...over,
+  });
 
   const rejects = async (coll, doc) => {
     await assert.rejects(() => db.collection(coll).insertOne(doc), `expected ${coll} insert to be rejected by validator`);
@@ -362,15 +355,19 @@ if (!URL) {
     await db.collection(coll).deleteOne({ _id: doc._id }); // keep collections clean for later assertions
   };
 
-  // The point as both `company` and `shopOwner` declare it: tuple form, one schema per axis,
-  // longitude first, and not decimal. The two collections describe the same GeoJSON value and must
-  // not disagree — asserting it from one place is what makes that a single claim.
+  // The point as `company` declares it: tuple form, one schema per axis, longitude first, and not
+  // decimal. `shopOwner` and `user` build the same node from the same helper and then encrypt it
+  // whole, so `company` is the one collection where the shape is still legible at rest — which makes
+  // this the only place those per-axis bounds can be asserted at all.
   const assertGeoJsonTuple = (coords) => {
     assert.ok(Array.isArray(coords.items), 'tuple-form coordinates, one schema per position');
     assert.equal(coords.items[0].maximum, 180, 'longitude first');
     assert.equal(coords.items[1].maximum, 90, 'latitude second');
     assert.deepEqual(coords.items[1].bsonType, ['double', 'int', 'long'], 'not decimal — mongoose writes a double');
   };
+
+  const at = (document, dotted) => dotted.split('.').reduce((node, segment) => node[segment], document);
+  const isCiphertext = (value) => value instanceof Binary && value.sub_type === Binary.SUBTYPE_ENCRYPTED;
 
   // ---- tests (run sequentially, in order) -----------------------------------
 
@@ -427,8 +424,8 @@ if (!URL) {
   // test went red" launders a schema regression into a committed expectation, which is the exact
   // failure mode these exist to catch. Every hunk in that diff has to be a change someone meant.
   //
-  // ⚠️ Position matters: both run while every migration is applied and before the first down-test
-  // pops anything. Moving either below the `down` tests would snapshot a half-reverted database.
+  // ⚠️ Position matters: both run while every migration is applied and before the seeded-up test
+  // below pops the seed. Moving either past it would snapshot a half-reverted database.
   // ⚠️ Both snapshot a JSON STRING rather than the object itself. pretty-format — what vitest
   // serializes objects with — prints object keys in sorted order, and key order is the whole
   // meaning of an index key document: `{ published: 1, deleted: 1, publicName: 1 }` IS the ESR
@@ -459,39 +456,33 @@ if (!URL) {
 
   test('seed demo present only when SEED_DEMO=true', async () => {
     const expected = SEEDED ? 1 : 0;
-    // admin + shopOwner come from 20260301001800-seed-demo; company comes from
-    // 20260803142526-seed-demo-company, ordered after 20260803000000-create-company so the
-    // collection it inserts into already exists. Both files are gated on the same flag.
+    // One migration writes all three, in owner-before-company order, and is a no-op without the flag.
     for (const c of ['admin', 'shopOwner', 'company']) {
       assert.equal(await db.collection(c).countDocuments(), expected, `${c} seed count`);
     }
   });
 
   test('validator enforces required fields', async () => {
-    await rejects('admin', { login: { email: 'x@t.co', password: 'x'.repeat(60) } }); // missing personalData
+    await rejects('admin', { login: { email: cipher(), password: 'x'.repeat(60) } }); // missing personalData
     await accepts('admin', validAdmin());
   });
 
-  // ---- 20260726000000-alter-shopOwner-emailVerify ------------------------
-  //
-  // The alter migration replaces the whole `shopOwner` validator via collMod, which is the risk
-  // worth testing: passing only the new block would silently drop every other rule on the collection.
-  // So the first assertion is that the pre-existing rules are still there, and only then that the new
-  // ones are.
+  // ---- shopOwner -------------------------------------------------------------
 
-  test('emailVerify collMod keeps the rest of the shopOwner validator intact', async () => {
+  test('the shopOwner validator declares the verify-email slot, and requires no member of it', async () => {
     const { $jsonSchema } = (await collInfo('shopOwner')).options.validator;
 
-    assert.deepEqual($jsonSchema.required, ['login', 'personalData', 'registeredAt'], 'top-level required survives');
-    assert.equal($jsonSchema.additionalProperties, false, 'strict object survives');
-    // resetPwd is the neighbour most likely to be clobbered by a partial collMod — and the one that
-    // must NOT be merged with emailVerify.
-    assert.deepEqual($jsonSchema.properties.resetPwd.required, ['resetDateReq', 'resetHash'], 'resetPwd rules survive');
+    assert.deepEqual($jsonSchema.required, ['login', 'personalData', 'registeredAt'], 'top-level required');
+    assert.equal($jsonSchema.additionalProperties, false, 'strict object');
+    // `resetPwd` and `emailVerify` are strictly disjoint slots and must not be merged: sharing one
+    // between the activation token and the reset token would let a hash issued by either flow
+    // authenticate the other.
+    assert.deepEqual($jsonSchema.properties.resetPwd.required, ['resetDateReq', 'resetHash'], 'resetPwd rules');
     assert.equal($jsonSchema.properties.personalData.properties.contacts.required.includes('mobile'), true);
     assert.equal($jsonSchema.properties.login.properties.password.minLength, 60);
 
     const ev = $jsonSchema.properties.emailVerify;
-    assert.ok(ev, 'emailVerify block added');
+    assert.ok(ev, 'emailVerify declared');
     assert.equal(ev.additionalProperties, false, 'emailVerify is strict');
     // No `required` array at all — every member is written independently by the koa-utils flow, so
     // requiring any of them makes the flow reject its own next write.
@@ -504,7 +495,7 @@ if (!URL) {
   });
 
   test('shopOwner accepts every emailVerify state the verify-email flow produces', async () => {
-    // no emailVerify at all — an shopOwner who never requested a link
+    // no emailVerify at all — a shop owner who never requested a link
     await accepts('shopOwner', validShopOwner(undefined));
     // post-setEmailHash: hash + requestTimes + dateLastReq, and deliberately no `valid`
     await accepts('shopOwner', validShopOwner({
@@ -514,8 +505,7 @@ if (!URL) {
     await accepts('shopOwner', validShopOwner({ valid: true }));
     // mid email-change: everything at once. `hash` is a comparison token the flow generates and is
     // not personal data, so it stays a string; `newEmailTmp` is an address the customer typed and is
-    // ciphertext since 20260808000100 — deterministic ciphertext, because koa-utils finds the
-    // account by it.
+    // ciphertext — deterministic ciphertext, because koa-utils finds the account by it.
     await accepts('shopOwner', validShopOwner({
       valid: true, hash: 'y'.repeat(50), requestTimes: new Int32(4),
       dateLastReq: new Date(), newEmailTmp: cipher(),
@@ -535,108 +525,18 @@ if (!URL) {
     // wrong types on the remaining members
     await rejects('shopOwner', validShopOwner({ valid: 'true' }));
     await rejects('shopOwner', validShopOwner({ dateLastReq: '2026-07-20' }));
-    // `newEmailTmp` was a string capped at 250 until 20260808000100 turned it into ciphertext. The
-    // cap went with the plaintext — a field-level rule cannot survive encryption, because the server
-    // sees a byte string and nothing else — so what is left to enforce is the TYPE, and a string is
-    // now the wrong one at any length. The 250 bound is re-asserted under the restored validator in
-    // the encrypted-down test at the foot of this file.
+    // ⚠️ `newEmailTmp` is an address, so it is ciphertext and a string is the wrong type at ANY
+    // length. There is no character bound on it and there cannot be: a ciphertext has no length the
+    // server can measure. That rule holds in the GraphQL input validation instead.
     await rejects('shopOwner', validShopOwner({ newEmailTmp: 'fresh@t.co' }));
     await rejects('shopOwner', validShopOwner({ newEmailTmp: 'n'.repeat(251) }));
     await accepts('shopOwner', validShopOwner({ newEmailTmp: cipher() }));
   });
 
-  test('emailVerify down strips the field and restores the narrower validator', async () => {
-    // Every migration that sorts above this one has to come off first — `down` reverts the most
-    // recently applied migration. Every migration added after this one has to extend this list and
-    // the count below.
-    await mm.down(db, client); // 20260808000300-alter-user-encrypted
-    await mm.down(db, client); // 20260808000200-alter-company-encrypted
-    await mm.down(db, client); // 20260808000100-alter-shopOwner-encrypted
-    await mm.down(db, client); // 20260808000000-alter-admin-encrypted
-
-    // ⚠️ Planted HERE and not before the four steps above, and in plaintext. `shopOwner` is back on
-    // its pre-encryption validator now, which refuses a binData `login.email`; planting the
-    // encrypted form first would also have handed `decryptStored` a fixture blob it cannot decrypt.
-    // Nothing between here and 20260726000000 touches this document.
-    const kept = validShopOwner({ valid: true, hash: 'z'.repeat(50) }, { encrypted: false });
-    await db.collection('shopOwner').insertOne(kept);
-
-    await mm.down(db, client); // 20260804050000-index-item-listing-sort
-    await mm.down(db, client); // 20260804040000-index-company-public-read
-    await mm.down(db, client); // 20260804030000-create-item
-    await mm.down(db, client); // 20260804020000-create-itemCategory
-    await mm.down(db, client); // 20260804010000-alter-company-public
-    await mm.down(db, client); // 20260804000000-create-user
-    await mm.down(db, client); // 20260803142526-seed-demo-company
-    await mm.down(db, client); // 20260803000000-create-company
-    await mm.down(db, client); // 20260802000300-alter-shopOwner-position-note
-    await mm.down(db, client); // 20260802000100-index-shopOwner-registeredAt
-    await mm.down(db, client); // 20260801000100-index-shopOwner-tbl
-    await mm.down(db, client); // 20260726000000-alter-shopOwner-emailVerify
-    const popped = 16;
-
-    const { $jsonSchema } = (await collInfo('shopOwner')).options.validator;
-    assert.equal($jsonSchema.properties.emailVerify, undefined, 'emailVerify removed from validator');
-    assert.deepEqual($jsonSchema.properties.resetPwd.required, ['resetDateReq', 'resetHash'], 'resetPwd still intact');
-
-    // down() unsets the field on the way out. Without that, this document would still carry `emailVerify`
-    // under a validator that no longer allows it, and its next full-document write would be rejected.
-    const stored = await db.collection('shopOwner').findOne({ _id: kept._id });
-    assert.equal('emailVerify' in stored, false, 'stored emailVerify unset by down()');
-
-    await db.collection('shopOwner').deleteOne({ _id: kept._id });
-    const applied = await mm.up(db, client);
-    assert.equal(applied.length, popped, 'every migration popped above re-applied');
-  });
-
-  // ---- 20260802000300-alter-shopOwner-position-note ----------------------
-  //
-  // The first wholesale collMod on `shopOwner` since emailVerify, adding two optional fields: the
-  // GeoJSON point of the address and the operator's free-text note. Optional is the whole design —
-  // `collMod` does not re-validate stored documents, so a required point would leave every
-  // shopOwner written before this migration unwritable, and there is nothing to backfill it from
-  // without geocoding every stored street address.
-
-  test('the shopOwner alter keeps the rest of its validator intact', async () => {
-    const { $jsonSchema } = (await collInfo('shopOwner')).options.validator;
-
-    assert.deepEqual($jsonSchema.required, ['login', 'personalData', 'registeredAt'], 'top-level required survives');
-    assert.equal($jsonSchema.additionalProperties, false, 'strict object survives');
-    // The emailVerify alter was restated on top of, so its work has to still be here — including its
-    // deliberate absence of a `required` array, which is what lets the verify flow write it in pieces.
-    assert.equal($jsonSchema.properties.emailVerify.properties.hash.maxLength, 50, 'the emailVerify alter survives');
-    assert.equal($jsonSchema.properties.emailVerify.required, undefined, 'emailVerify still requires no member');
-    assert.deepEqual($jsonSchema.properties.resetPwd.required, ['resetDateReq', 'resetHash'], 'resetPwd intact');
-
-    const address = $jsonSchema.properties.personalData.properties.address;
-    // What this migration ADDED to the address block is `position`, and what it did NOT do is make
-    // it required — the collection was already populated and a coordinate cannot be derived from a
-    // stored street without geocoding it. That claim is independent of the field's type and is the
-    // one worth pinning here.
-    assert.deepEqual(address.required, ['street', 'postalCode', 'city', 'province'], 'position is NOT required');
-
-    // ⚠️ The street bound of 250 and the tuple-form coordinate schema are gone from the RESTING
-    // validator: 20260808000100 encrypts `street` and `position`, and a field-level rule cannot
-    // survive encryption — the server is handed a byte string and has nothing left to measure. Both
-    // are re-asserted against the restored plaintext validator in the encrypted-down test at the
-    // foot of this file, which is the only state in which they still mean anything.
-    assert.equal(address.properties.street.bsonType, 'binData', 'the street is ciphertext at rest');
-    assert.equal(address.properties.position.bsonType, 'binData', 'and so is the point');
-    // `city` is the exception, and stays a bounded string: tbl_active_city sorts on it.
-    assert.equal(address.properties.city.maxLength, 100, 'city stays a plain bounded string — tbl_active_city sorts on it');
-
-    // Top level, not inside personalData: `personalData` is what the shopOwner declared about
-    // themselves, the note is what an operator wrote about them. Encrypted at rest, and required in
-    // neither state — the placement claim is what this migration is on the hook for.
-    assert.equal($jsonSchema.properties.notes.bsonType, 'binData', 'the operator note is ciphertext at rest');
-    assert.equal($jsonSchema.required.includes('notes'), false, 'note is not required');
-    assert.equal($jsonSchema.properties.personalData.properties.notes, undefined, 'note is not under personalData');
-  });
-
-  test('the shopOwner address point stays optional, and is opaque at rest', async () => {
-    // Absent is valid, and that is the assertion this migration rests on: every shopOwner written
-    // before it is shaped exactly like this one, and a required point would have made all of them
-    // unwritable on their next update.
+  test('the shopOwner address point is optional, and opaque', async () => {
+    // Absent is valid, and deliberately: a coordinate arrives only when the address is picked from
+    // the operator app's autocomplete, and an address typed by hand simply has none. Requiring it
+    // would make the field unwritable from every other path.
     await accepts('shopOwner', validShopOwner());
 
     const withPosition = (position) => {
@@ -646,91 +546,98 @@ if (!URL) {
     };
     await accepts('shopOwner', withPosition(cipher()));
 
-    // ⚠️ 20260808000100 encrypts the point WHOLE — one blob, not a `type` beside an encrypted
-    // `coordinates` — so the GeoJSON document is itself a rejected write now, per-axis bounds and
-    // all. That was affordable here and only here: nothing queries a shop owner by distance and no
-    // 2dsphere index was ever built over this field. `company.address.position` backs the map and
+    // ⚠️ The point is encrypted WHOLE — one blob, not a `type` beside an encrypted `coordinates` —
+    // so the GeoJSON document is itself a rejected write here, per-axis bounds and all. That is
+    // affordable on this collection and only on this one: nothing queries a shop owner by distance
+    // and no 2dsphere index exists over the field. `company.address.position` backs the map and
     // `companiesNearby`, so it stays in the clear and keeps every rule asserted below.
     await rejects('shopOwner', withPosition({ type: 'Point', coordinates: [new Double(9.6), new Double(45.6)] }));
-    // The full GeoJSON matrix — axis order, per-axis bounds, int, no Decimal128 — is asserted against
-    // the restored plaintext validator in the encrypted-down test at the foot of this file.
   });
 
-  test('the shopOwner operator note stays optional, and is opaque at rest', async () => {
-    const withNotes = (notes) => ({ ...validShopOwner(), notes });
+  test('the shopOwner operator note is optional, top level, and opaque', async () => {
+    const { $jsonSchema } = (await collInfo('shopOwner')).options.validator;
+    // Top level, not inside personalData: `personalData` is what the shop owner declared about
+    // themselves, the note is what an operator wrote about them — and nothing in the ShopOwner tier
+    // loads this model, so the field cannot leak to its subject.
+    assert.equal($jsonSchema.properties.notes.bsonType, 'binData', 'the operator note is ciphertext');
+    assert.equal($jsonSchema.required.includes('notes'), false, 'and not required');
+    assert.equal($jsonSchema.properties.personalData.properties.notes, undefined, 'and not under personalData');
 
+    const withNotes = (notes) => ({ ...validShopOwner(), notes });
     await accepts('shopOwner', withNotes(cipher()));
-    // Optional in both states: nothing obliges an operator to have written anything about an account.
+    // Optional: nothing obliges an operator to have written anything about an account.
     await accepts('shopOwner', validShopOwner());
-    // The 2000-character cap went with the plaintext and is re-asserted under the restored validator
-    // below. What survives here is the type — and under `additionalProperties: false` a value of the
-    // wrong type is refused rather than coerced, whether it is a string or a number.
+    // Under `additionalProperties: false` a value of the wrong type is refused rather than coerced,
+    // whether it is a string or a number.
     await rejects('shopOwner', withNotes('Call back in September'));
     await rejects('shopOwner', withNotes(7));
   });
 
-  test('the shopOwner alter down strips both fields and restores the previous validator', async () => {
-    // No longer the newest migration — the four encrypted alters, `user`, company and its seed all
-    // sort above it and come off first.
-    await mm.down(db, client); // 20260808000300-alter-user-encrypted
-    await mm.down(db, client); // 20260808000200-alter-company-encrypted
-    await mm.down(db, client); // 20260808000100-alter-shopOwner-encrypted
-    await mm.down(db, client); // 20260808000000-alter-admin-encrypted
+  test('the table indexes lead with the filter fields and end on _id', async () => {
+    // These four back the paginated operator table, and their KEYS are what matters rather than
+    // their existence: a sorted+skipped query whose sort keys are not a prefix of some index falls
+    // back to a blocking in-memory sort, which MongoDB caps at 32 MB and then fails outright. That
+    // failure is data-dependent — it appears the day the collection outgrows the cap, not the day the
+    // index is wrong — so the shape is asserted here rather than discovered in production.
+    //
+    // Key ORDER is significant, so deepEqual on the whole document — not a membership check.
+    // `deleted`/`disabled` first because `{ $exists: false }` is equality-shaped (the ESR rule);
+    // leading with the sort key instead would still sort from the index but scan the soft-deleted
+    // documents the filter exists to exclude.
+    assert.deepEqual(await indexKeys('shopOwner', 'tbl_active_registeredAt'), {
+      deleted: 1, disabled: 1, registeredAt: -1, _id: -1,
+    });
+    // lastName and firstName share one index in that order: it serves `sortBy: LAST_NAME` (which
+    // tie-breaks on firstName) and, as a prefix, nothing else. firstName alone is NOT a prefix of it,
+    // which is why it gets an index of its own.
+    assert.deepEqual(await indexKeys('shopOwner', 'tbl_active_lastName_firstName'), {
+      deleted: 1, disabled: 1, 'personalData.lastName': 1, 'personalData.firstName': 1, _id: 1,
+    });
+    assert.deepEqual(await indexKeys('shopOwner', 'tbl_active_firstName'), {
+      deleted: 1, disabled: 1, 'personalData.firstName': 1, _id: 1,
+    });
+    assert.deepEqual(await indexKeys('shopOwner', 'tbl_active_city'), {
+      deleted: 1, disabled: 1, 'personalData.address.city': 1, _id: 1,
+    });
+    // ⚠️ The chart's index is NOT one of the four and cannot be a prefix of any of them: it bounds a
+    // `registeredAt` range with no `deleted`/`disabled` equality in front of it, and every
+    // tbl_active_* index leads with both.
+    assert.deepEqual(await indexKeys('shopOwner', 'registeredAt_series'), { registeredAt: 1 });
 
-    // Planted after the encrypted alters come off, for the reason spelled out in the emailVerify
-    // down-test above: plaintext is what the restored validator takes. That goes for the two fields
-    // this migration added as well — 20260808000100 encrypts both `notes` and `address.position`, so
-    // the plaintext note and the GeoJSON point below are writable only in the state this ladder has
-    // just restored, which is the state this test is about.
-    const annotated = validShopOwner(undefined, { encrypted: false });
-    annotated.notes = 'Operator note';
-    annotated.personalData.address.position = { type: 'Point', coordinates: [new Double(9.6), new Double(45.6)] };
-    await db.collection('shopOwner').insertOne(annotated);
+    // One direction applied uniformly across every SORT component, `_id` included. That is what
+    // lets a single index serve both ASC and DESC — a compound index satisfies a sort and its
+    // complete inverse, but a mixed sort like `{ lastName: 1, _id: -1 }` is neither, and goes back
+    // to the blocking sort. Per-column sort directions would break here first.
+    //
+    // `deleted`/`disabled` are excluded because they are matched, not sorted: their direction is
+    // irrelevant to whether the index serves an ordering, which is why tbl_active_registeredAt can
+    // pair `{ deleted: 1, disabled: 1 }` with `{ registeredAt: -1, _id: -1 }` and still be uniform.
+    for (const name of ['tbl_active_registeredAt', 'tbl_active_lastName_firstName', 'tbl_active_firstName', 'tbl_active_city']) {
+      const keys = await indexKeys('shopOwner', name);
+      const sortDirections = Object.entries(keys)
+        .filter(([field]) => field !== 'deleted' && field !== 'disabled')
+        .map(([, direction]) => direction);
+      assert.equal(new Set(sortDirections).size, 1, `${name} mixes sort directions`);
+    }
 
-    await mm.down(db, client); // 20260804050000-index-item-listing-sort
-    await mm.down(db, client); // 20260804040000-index-company-public-read
-    await mm.down(db, client); // 20260804030000-create-item
-    await mm.down(db, client); // 20260804020000-create-itemCategory
-    await mm.down(db, client); // 20260804010000-alter-company-public
-    await mm.down(db, client); // 20260804000000-create-user
-    await mm.down(db, client); // 20260803142526-seed-demo-company
-    await mm.down(db, client); // 20260803000000-create-company
-    await mm.down(db, client); // 20260802000300-alter-shopOwner-position-note
-
-    const { $jsonSchema } = (await collInfo('shopOwner')).options.validator;
-    assert.equal($jsonSchema.properties.notes, undefined, 'note removed from the validator');
-    assert.equal($jsonSchema.properties.personalData.properties.address.properties.position, undefined,
-      'position removed from the validator');
-    // What this migration did not add, its revert must leave behind.
-    assert.equal($jsonSchema.properties.emailVerify.properties.hash.maxLength, 50, 'emailVerify survives the revert');
-
-    // down() unsets both on the way out: the restored validator is additionalProperties:false at both
-    // levels, so a document still carrying either would be refused on its next full-document write.
-    const stripped = await db.collection('shopOwner').findOne({ _id: annotated._id });
-    assert.equal('notes' in stripped, false, 'stored note unset by down()');
-    assert.equal('position' in stripped.personalData.address, false, 'stored position unset by down()');
-
-    await db.collection('shopOwner').deleteOne({ _id: annotated._id });
-    const applied = await mm.up(db, client);
-    assert.equal(applied.length, 13,
-      'the shopOwner alter, the company creation, its seed, the user creation, the three catalogue migrations, the two index migrations and the four encrypted alters re-applied');
+    // None of them is unique: two shop owners may perfectly well share a city, and a unique
+    // index here would reject the second one at insert time.
+    const built = (await db.collection('shopOwner').indexes()).filter((i) => i.name.startsWith('tbl_active_'));
+    assert.equal(built.length, 4, 'exactly four table indexes');
+    for (const i of built) assert.equal(i.unique, undefined, `${i.name} must not be unique`);
   });
 
-  // ---- 20260803000000-create-company -----------------------------------------
+  // ---- company ---------------------------------------------------------------
   //
-  // A company is a legal entity and a point of sale is a shop — `company` used to be an object
-  // embedded inside the (now-removed) old shop collection, one copy per shop, until two unique indexes on
-  // its VAT number and certified email made a company's second shop a rejected duplicate. This migration lifts
-  // it into a collection of its own, owned by an shopOwner, so one company can run N shops.
+  // A company is a legal entity AND the shop a customer browses — there is no `shop` collection and
+  // there is not going to be one, so the registrar's fields and the storefront's sit side by side.
 
   test('the company validator declares the company fields', async () => {
-    // `jsonSchemaOf`, not a destructure: 20260804010000 made this validator the `$and` pair, so
-    // `options.validator.$jsonSchema` is undefined here and every assertion below would have read a
-    // property of undefined.
+    // `jsonSchemaOf`, not a destructure: this validator is the `$and` pair, so
+    // `options.validator.$jsonSchema` is undefined and every assertion below would read a property
+    // of undefined.
     const $jsonSchema = jsonSchemaOf((await collInfo('company')).options.validator);
 
-    // `published` is last because the alter appends it — the create migration's eight, then the one
-    // field that had to join `required` for the shop listing to mean anything.
     assert.deepEqual(
       $jsonSchema.required,
       ['idShopOwner', 'legalName', 'vatNumber', 'contactPerson', 'administrator', 'certifiedEmail', 'registryExtract', 'address',
@@ -738,27 +645,38 @@ if (!URL) {
       'required list'
     );
     assert.equal($jsonSchema.additionalProperties, false, 'strict object');
-    assert.deepEqual($jsonSchema.properties.idShopOwner, { bsonType: 'objectId' }, 'owned by an shopOwner');
+    assert.deepEqual($jsonSchema.properties.idShopOwner, { bsonType: 'objectId' }, 'owned by a shop owner');
 
     assert.equal($jsonSchema.properties.legalName.maxLength, 100, 'legalName bound');
     assert.equal($jsonSchema.properties.vatNumber.minLength, 11, 'vatNumber lower bound');
     assert.equal($jsonSchema.properties.vatNumber.maxLength, 11, 'vatNumber upper bound');
-    // ⚠️ The 50-character bounds on the two natural persons went with their plaintext in
-    // 20260808000200 and are re-asserted under the restored validator at the foot of this file. That
-    // migration touched exactly these two of the sixteen fields: everything else on a company
-    // identifies a legal entity or is published to anonymous visitors.
-    assert.equal($jsonSchema.properties.contactPerson.bsonType, 'binData', 'contactPerson is ciphertext at rest');
-    assert.equal($jsonSchema.properties.administrator.bsonType, 'binData', 'administrator is ciphertext at rest');
+    // ⚠️ The two natural persons are the only encrypted fields on the collection, and they carry no
+    // character bound for exactly that reason — a ciphertext has no length the server can measure.
+    // Everything else on a company identifies a legal entity or is published to anonymous visitors.
+    assert.equal($jsonSchema.properties.contactPerson.bsonType, 'binData', 'contactPerson is ciphertext');
+    assert.equal($jsonSchema.properties.administrator.bsonType, 'binData', 'administrator is ciphertext');
     assert.equal($jsonSchema.properties.uniqueCode.minLength, 7, 'uniqueCode lower bound');
     assert.equal($jsonSchema.properties.uniqueCode.maxLength, 7, 'uniqueCode upper bound');
     assert.equal($jsonSchema.properties.certifiedEmail.maxLength, 250, 'certifiedEmail bound');
     assert.equal($jsonSchema.properties.registryExtract.maxLength, 1000, 'registryExtract is capped');
 
-    // `taxCode` is optional by omission from the required list above: `collMod` does not re-validate
-    // stored documents, and no company carries the field.
+    // `taxCode` is optional by omission from the required list above — the 11-character company
+    // form, not the 16-character personal one.
     assert.equal($jsonSchema.properties.taxCode.minLength, 11, 'taxCode lower bound');
     assert.equal($jsonSchema.properties.taxCode.maxLength, 11, 'taxCode upper bound');
     assert.equal($jsonSchema.required.includes('taxCode'), false, 'taxCode is optional');
+
+    // Only `published` joins `required` of the four storefront fields. The other three cannot: a
+    // company is registered before it is a shop, and no slug or trading name can be derived from a
+    // registered legal name without inventing one. The `$expr` clause is what keeps that from
+    // producing a broken storefront — asserted in its own test below.
+    for (const field of ['publicName', 'slug', 'description', 'published']) {
+      assert.ok(field in $jsonSchema.properties, `${field} declared`);
+    }
+    assert.ok($jsonSchema.required.includes('published'), 'published is required');
+    for (const field of ['publicName', 'slug', 'description']) {
+      assert.equal($jsonSchema.required.includes(field), false, `${field} stays optional`);
+    }
 
     // `deleted` is a DATE, the spelling `shopOwner` already uses — a bool would answer whether
     // the document is gone and not when. Optional, and it has to be: a live company has no deletion
@@ -769,7 +687,6 @@ if (!URL) {
     // The registered seat: required, position included, since the collection is created empty and
     // there is no stored document for the requirement to strand.
     assert.deepEqual(
-      // `address`, not `street` — same rename leftover as in the shopOwner alter test above.
       $jsonSchema.properties.address.required,
       ['street', 'postalCode', 'city', 'province', 'position'],
       'position is required'
@@ -780,8 +697,8 @@ if (!URL) {
   test('company enforces its field rules', async () => {
     await accepts('company', validCompany());
 
-    // An company with no owner is unreachable — every read path lists by shopOwner — so the field
-    // is required, and it is an objectId, not the string a GraphQL ID would arrive as.
+    // A company with no owner is unreachable — every owner-facing read path lists by owner — so the
+    // field is required, and it is an objectId, not the string a GraphQL ID would arrive as.
     const withoutOwner = validCompany();
     delete withoutOwner.idShopOwner;
     await rejects('company', withoutOwner);
@@ -791,8 +708,8 @@ if (!URL) {
     await rejects('company', { ...validCompany(), vatNumber: '1'.repeat(10) });
     await rejects('company', { ...validCompany(), vatNumber: '1'.repeat(12) });
 
-    // taxCode is the same fixed width — the tax code of a legal entity, not the 16-character
-    // personal form — and optional, so its absence from every helper above is not an oversight.
+    // taxCode is the same fixed width and optional, so its absence from every helper above is not an
+    // oversight.
     await accepts('company', { ...validCompany(), taxCode: '1'.repeat(11) });
     await rejects('company', { ...validCompany(), taxCode: '1'.repeat(10) });
     await rejects('company', { ...validCompany(), taxCode: '1'.repeat(12) });
@@ -806,17 +723,14 @@ if (!URL) {
     await rejects('company', { ...validCompany(), registryExtract: 'v'.repeat(1001) });
 
     await rejects('company', { ...validCompany(), legalName: 'R'.repeat(101) });
-    // The two natural persons are ciphertext at rest, so a plain string is refused at any length —
-    // their 50-character bounds are re-asserted under the restored validator at the foot of the file.
+    // The two natural persons are ciphertext, so a plain string is refused at any length.
     await rejects('company', { ...validCompany(), contactPerson: 'R' });
     await rejects('company', { ...validCompany(), administrator: 'A' });
     await rejects('company', { ...validCompany(), certifiedEmail: `${'p'.repeat(245)}@mail.example` });
     // bsonType string under additionalProperties:false — a number is refused, not coerced.
     await rejects('company', { ...validCompany(), legalName: 7 });
 
-    // The shop's own trading name named nothing here even while the old shop collection existed, and
-    // still names nothing now that it does not: `additionalProperties: false` refuses any field
-    // the validator does not declare.
+    // A field the validator does not declare is refused outright, whatever it is called.
     await rejects('company', { ...validCompany(), firstName: 'Shop Sign' });
   });
 
@@ -836,9 +750,9 @@ if (!URL) {
   });
 
   test('a soft-deleted company keeps its VAT number and certified email occupied', async () => {
-    // The consequence of leaving `vatNumber_unique` / `certifiedEmail_unique` global rather than partial, asserted
-    // rather than left to be discovered: the document is still indexed once `deleted` is set, so the same
-    // company cannot be registered a second time while the deleted one is there. That matches
+    // The consequence of leaving `vatNumber_unique` / `certifiedEmail_unique` global rather than partial,
+    // asserted rather than left to be discovered: the document is still indexed once `deleted` is set, so
+    // the same company cannot be registered a second time while the deleted one is there. That matches
     // `shopOwner.login.email_unique`, which behaves the same way for a soft-deleted owner.
     const removed = { ...validCompany(), deleted: new Date() };
     await db.collection('company').insertOne(removed);
@@ -867,8 +781,8 @@ if (!URL) {
 
     await accepts('company', withAddress(base()));
 
-    // Required, `position` included. The collection is created empty, so unlike the shopOwner
-    // alter there is no stored document for the requirement to strand.
+    // Required, `position` included. The collection is created empty, so there is no stored document
+    // for the requirement to strand.
     const withoutAddress = validCompany();
     delete withoutAddress.address;
     await rejects('company', withoutAddress);
@@ -887,6 +801,10 @@ if (!URL) {
     await rejects('company', withPosition([Decimal128.fromString('9.6'), Decimal128.fromString('45.6')]));
     await rejects('company', withPosition([new Double(9.6)]));
 
+    // ⚠️ The street bound, the exactly-5 postal code and the exactly-2 province are enforced HERE and
+    // nowhere else on the platform: `shopOwner` and `user` encrypt all three, and a ciphertext has no
+    // length the server can measure. This is the one collection whose address is public data.
+    await rejects('company', withAddress({ ...base(), street: 'V'.repeat(101) }));
     await rejects('company', withAddress({ ...base(), postalCode: '2403' }));
     await rejects('company', withAddress({ ...base(), province: 'BGX' }));
     await rejects('company', withAddress({ ...base(), city: 'C'.repeat(101) }));
@@ -898,7 +816,7 @@ if (!URL) {
     assert.equal(byName.vatNumber_unique.unique, true, 'vatNumber index is unique');
     assert.deepEqual(byName.certifiedEmail_unique.key, { certifiedEmail: 1 }, 'certifiedEmail index key');
     assert.equal(byName.certifiedEmail_unique.unique, true, 'certifiedEmail index is unique');
-    // NOT unique: one shopOwner owning several companies is the whole point of the collection, and
+    // NOT unique: one shop owner owning several companies is the whole point of the collection, and
     // a unique index here would reject the second one at insert time.
     assert.deepEqual(byName.idShopOwner_list.key, { idShopOwner: 1 }, 'list index key');
     assert.equal(byName.idShopOwner_list.unique, undefined, 'the list index must not be unique');
@@ -909,7 +827,7 @@ if (!URL) {
     await db.collection('company').insertOne(first);
 
     // Different owner, different certified email, same VAT number — still refused. The index is global,
-    // not scoped per shopOwner: one VAT number is one company, whoever registered it.
+    // not scoped per shop owner: one VAT number is one company, whoever registered it.
     await assert.rejects(
       () => db.collection('company').insertOne({ ...validCompany(), vatNumber: first.vatNumber }),
       /duplicate key/,
@@ -921,50 +839,19 @@ if (!URL) {
       'certifiedEmail is globally unique'
     );
 
-    // A second company under the SAME owner is accepted — one shopOwner may own several companies.
+    // A second company under the SAME owner is accepted — one shop owner may own several companies.
     await accepts('company', { ...validCompany(), idShopOwner: first.idShopOwner });
 
     await db.collection('company').deleteOne({ _id: first._id });
-  });
-
-  // ---- 20260804010000-alter-company-public -----------------------------------
-  //
-  // The migration that turns the legal record into a shop listing. Three things it does are worth
-  // asserting rather than trusting: the four fields arrived, the pre-existing shape survived a
-  // wholesale `collMod`, and the publish rule is enforced by the database rather than by whoever
-  // remembers to check it.
-
-  test('the company alter adds the four public fields and requires only published', async () => {
-    const validator = (await collInfo('company')).options.validator;
-
-    // The validator is the `$and` pair now, not a bare `$jsonSchema`. Asserted explicitly because a
-    // future `collMod` that passes only the schema half would silently drop the publish rule, and
-    // nothing else in this suite would notice.
-    assert.ok(Array.isArray(validator.$and) && validator.$and.length === 2, 'validator is the $and pair');
-
-    const $jsonSchema = jsonSchemaOf(validator);
-    for (const field of ['publicName', 'slug', 'description', 'published']) {
-      assert.ok(field in $jsonSchema.properties, `${field} declared`);
-    }
-    // Only `published` joins `required`. The other three cannot: `collMod` does not re-validate
-    // stored documents, but it does govern their next write, and no slug or trading name can be
-    // derived from a registered legal name without inventing one.
-    assert.ok($jsonSchema.required.includes('published'), 'published is required');
-    for (const field of ['publicName', 'slug', 'description']) {
-      assert.equal($jsonSchema.required.includes(field), false, `${field} stays optional`);
-    }
-
-    // The wholesale replace kept everything 20260803000000 declared — including the per-axis
-    // coordinate bounds, which are the part a careless restatement loses first.
-    assert.equal($jsonSchema.properties.legalName.maxLength, 100, 'the create shape survives the collMod');
-    assert.equal($jsonSchema.properties.vatNumber.minLength, 11, 'and so do its exact-length rules');
-    assertGeoJsonTuple($jsonSchema.properties.address.properties.position.properties.coordinates);
   });
 
   test('a published company must be linkable, on insert and on update', async () => {
     // `published: true` with no slug is a shop with no URL; with no publicName it is a card with no
     // heading. Neither is a state the storefront can draw, and the `$expr` half makes both
     // unwritable — which is the whole reason the validator is a pair.
+    const validator = (await collInfo('company')).options.validator;
+    assert.ok(Array.isArray(validator.$and) && validator.$and.length === 2, 'validator is the $and pair');
+
     await rejects('company', { ...validCompany(), published: true, publicName: 'Shop' });
     await rejects('company', { ...validCompany(), published: true, slug: `shop-${uid()}` });
     await accepts('company', { ...validCompany(), published: true, publicName: 'Shop', slug: `shop-${uid()}` });
@@ -997,10 +884,11 @@ if (!URL) {
 
   test('the slug unique index is partial, so slugless companies coexist', async () => {
     // A plain unique index stores one null key per document missing the field, so the SECOND company
-    // without a slug would be refused as a duplicate of the first — and every company written before
-    // this migration is one. `partialFilterExpression: { slug: { $type: 'string' } }` leaves them out
-    // of the index entirely. `$type: 'string'` rather than `$exists: true`, which would admit an
-    // explicit null and put the null keys back.
+    // without a slug would be refused as a duplicate of the first — and a company is registered
+    // before it is a shop, so slugless is the normal state.
+    // `partialFilterExpression: { slug: { $type: 'string' } }` leaves them out of the index entirely.
+    // `$type: 'string'` rather than `$exists: true`, which would admit an explicit null and put the
+    // null keys back.
     const idx = (await db.collection('company').indexes()).find((i) => i.name === 'slug_unique');
     assert.equal(idx.unique, true, 'slug_unique is unique');
     assert.deepEqual(idx.partialFilterExpression, { slug: { $type: 'string' } }, 'and partial on a string slug');
@@ -1021,6 +909,28 @@ if (!URL) {
     await db.collection('company').deleteMany({ _id: { $in: [a._id, b._id, taken._id] } });
   });
 
+  test('the company listing indexes put the sort key after the last equality predicate', async () => {
+    // ⚠️ An index serves a sort only from the keys AFTER the last equality predicate, which is what
+    // dictates these shapes. `{ published, deleted, publicName }` walks the index in output order and
+    // stops after skip + limit; `{ published, deleted, publicName, address.city }` would index all
+    // four fields, answer the same filter, and still hand every match to a blocking in-memory SORT.
+    // So the city equality goes IN FRONT of the sort key.
+    assert.deepEqual(await indexKeys('company', 'published_list'), { published: 1, deleted: 1 },
+      'the two equality predicates every public read carries');
+    assert.deepEqual(await indexKeys('company', 'published_publicName'), { published: 1, deleted: 1, publicName: 1 },
+      '/shops, sorted by trading name from the index');
+    assert.deepEqual(await indexKeys('company', 'published_city_publicName'),
+      { published: 1, deleted: 1, 'address.city': 1, publicName: 1 },
+      '/shops/:city — the city equality before the sort key, not after it');
+
+    // `published_list` is a strict prefix of `published_publicName` and therefore redundant to the
+    // planner. It is installed anyway, deliberately: `company` is written a handful of times per shop
+    // and read on every page view, so the spare index costs almost nothing and the filter-only reads
+    // walk two keys instead of three. `item` makes the opposite call, for the opposite reason.
+    const names = (await db.collection('company').indexes()).map((i) => i.name);
+    assert.ok(names.includes('published_list'), 'the prefix index is kept on the read-heavy collection');
+  });
+
   test('the 2dsphere answers a $near rather than scanning', async () => {
     // `$near` on a collection with no 2dsphere index is an ERROR, not a slow query
     // ("unable to find index for $geoNear query"), so the query completing at all is half the
@@ -1039,7 +949,79 @@ if (!URL) {
     assert.ok(winning.includes('address.position_2dsphere'), 'and it is the index this migration built');
   });
 
-  // ---- 20260804020000-create-itemCategory ------------------------------------
+  // ---- user ------------------------------------------------------------------
+  //
+  // The end customer. It mirrors `shopOwner` — role here is which collection you authenticate
+  // against, not a field — and diverges in exactly four places, all deliberate.
+
+  test('the user validator mirrors shopOwner and diverges in four places', async () => {
+    const $jsonSchema = jsonSchemaOf((await collInfo('user')).options.validator);
+
+    // 1. `personalData` is OPTIONAL. Registration is an email and a password and nothing else; the
+    //    name and the contact details are filled in afterwards. `shopOwner` requires it because a
+    //    shop owner is onboarded by a person who collects it all up front.
+    assert.deepEqual($jsonSchema.required, ['login', 'registeredAt'], 'only the credential and the sign-up date');
+    // 2. `addresses` is an ARRAY where `shopOwner` has one `personalData.address`: a customer has a
+    //    home, an office and a friend's flat; a shop owner has a residence.
+    assert.equal($jsonSchema.properties.addresses.bsonType, 'array', 'addresses is a list');
+    assert.equal($jsonSchema.properties.personalData.properties.address, undefined, 'and not a single block');
+    // 3. `defaultAddress` has no counterpart at all — see the `$expr` test below.
+    assert.equal($jsonSchema.properties.defaultAddress.bsonType, 'objectId', 'the default is a pointer');
+    // 4. No `waitApprov`. Customers self-serve: there is no operator approval gate between
+    //    registering and using the account, only the email confirmation.
+    assert.equal($jsonSchema.properties.waitApprov, undefined, 'no approval gate on a customer');
+
+    // `contacts` requires none of its members, where `shopOwner`'s requires `mobile` and `email`. The
+    // account's address is `login.email` and is the credential; `contacts` is for a *different*
+    // address, so demanding it would ask the customer to retype what they already gave.
+    assert.equal($jsonSchema.properties.personalData.properties.contacts.required, undefined,
+      'no contact detail is mandatory');
+
+    // ⚠️ Every personal field here is ciphertext, `city` included — which is where this collection
+    // diverges from `shopOwner`, and it can afford to because nothing sorts, searches or paginates
+    // customers. `_id` is the exception, and has to be: the `$expr` clause compares it.
+    const element = $jsonSchema.properties.addresses.items;
+    for (const member of ['label', 'street', 'postalCode', 'city', 'province', 'position']) {
+      assert.equal(element.properties[member].bsonType, 'binData', `addresses[].${member} is ciphertext`);
+    }
+    assert.equal(element.properties._id.bsonType, 'objectId', 'the address id stays an objectId');
+    assert.deepEqual(element.required, ['_id', 'street', 'postalCode', 'city', 'province'],
+      'an element needs an id, and its point stays optional');
+  });
+
+  test('user refuses a defaultAddress that points nowhere', async () => {
+    // "At most one default address", enforced by the database rather than by every write path. A
+    // boolean per element can represent two defaults; a pointer cannot represent a second one at all,
+    // so setting one is a single atomic `$set` with no clear-then-set window to interleave into. What
+    // a pointer CAN get wrong is dangling — and unlike "exactly one true", that is checkable.
+    const home = addressElement();
+
+    // Absent is valid, with or without addresses. `$ifNull` in the rule is what makes the second case
+    // work: `$map` over a missing field yields null, and `$in` against null is an ERROR rather than a
+    // false, which would turn "no addresses yet" into an unwritable document.
+    await accepts('user', validUser());
+    await accepts('user', validUser({ addresses: [home] }));
+    await accepts('user', validUser({ addresses: [home], defaultAddress: home._id }));
+
+    // Naming an id that is in no element of THIS document is refused — including the case where the
+    // array is missing entirely.
+    await rejects('user', validUser({ defaultAddress: new ObjectId() }));
+    await rejects('user', validUser({ addresses: [home], defaultAddress: new ObjectId() }));
+
+    // And on the way through, not only on the way in: deleting the default address has to `$unset`
+    // the pointer in the same update, and if it does not, MongoDB refuses the write rather than an
+    // application path somebody can forget to call.
+    const customer = validUser({ addresses: [home], defaultAddress: home._id });
+    await db.collection('user').insertOne(customer);
+    await assert.rejects(
+      () => db.collection('user').updateOne({ _id: customer._id }, { $pull: { addresses: { _id: home._id } } }),
+      /failed validation/,
+      'removing the element the pointer names is refused'
+    );
+    await db.collection('user').deleteOne({ _id: customer._id });
+  });
+
+  // ---- itemCategory ----------------------------------------------------------
   //
   // The platform-wide taxonomy, two levels deep, written only by the Admin tier. It has no owner
   // column at all, because a category spans every shop.
@@ -1096,10 +1078,10 @@ if (!URL) {
     await db.collection('itemCategory').deleteOne({ _id: parent._id });
   });
 
-  // ---- 20260804030000-create-item --------------------------------------------
+  // ---- item ------------------------------------------------------------------
   //
-  // What a shop sells. One collection plus the taxonomy above, replacing the 13 product-type
-  // collections dropped on 2026-08-04 — they differed in their category, not in their shape.
+  // What a shop sells. One collection plus the taxonomy above, for every kind of product the
+  // platform will ever carry (ADR-008).
 
   test('the item validator is domain-neutral and has no price', async () => {
     const { $jsonSchema } = (await collInfo('item')).options.validator;
@@ -1166,13 +1148,12 @@ if (!URL) {
     // Not made redundant by idCompany_list: that one has `deleted` in second position, so a query
     // filtering on `published` would fetch and discard every draft the shop has.
     //
-    // ⚠️ The trailing `name` is the load-bearing key and the reason `20260804050000` exists. Both
-    // listings sort by `name`, and an index serves a sort only from the keys AFTER the last equality
-    // predicate — so the three-key forms these replaced answered the filter and then handed every
-    // match to an in-memory SORT stage. Measured at 100 000 items in one category: 100 000 docs
-    // examined and 170 ms became 24 and 3 ms. Asserted as a key document rather than by name because
-    // the position of `name` is the whole point; an index on the same four fields in any other order
-    // does not serve the sort.
+    // ⚠️ The trailing `name` is the load-bearing key. Both listings sort by `name`, and an index
+    // serves a sort only from the keys AFTER the last equality predicate — so a three-key form would
+    // answer the filter and then hand every match to an in-memory SORT stage. Measured at 100 000
+    // items in one category: 100 000 docs examined and 170 ms against 24 and 3 ms, for the same 24
+    // items. Asserted as a key document rather than by name because the position of `name` is the
+    // whole point; an index on the same four fields in any other order does not serve the sort.
     assert.deepEqual(await indexKeys('item', 'idCompany_published_name'),
       { idCompany: 1, published: 1, deleted: 1, name: 1 },
       'the public shop page, sorted by name from the index');
@@ -1180,11 +1161,13 @@ if (!URL) {
       { idCategory: 1, published: 1, deleted: 1, name: 1 },
       'the category browse — the route with the broadest fan-out, one category across every shop');
 
-    // The superseded prefixes are gone, not merely unused: an exact prefix of a longer index earns
-    // nothing and costs a write on every catalogue edit.
+    // ⚠️ The three-key prefixes are NOT installed alongside them, which is the opposite call from
+    // `company.published_list` and deliberately so: every plan that could use the short index can use
+    // the long one, and `item` is the write-heavy collection of the three — a shop owner edits a
+    // catalogue continuously, where a registration happens once.
     const names = (await db.collection('item').indexes()).map((i) => i.name);
-    assert.ok(!names.includes('idCompany_published'), 'the three-key shop-page index was dropped');
-    assert.ok(!names.includes('idCategory_published'), 'the three-key category index was dropped');
+    assert.ok(!names.includes('idCompany_published'), 'no redundant three-key shop-page index');
+    assert.ok(!names.includes('idCategory_published'), 'no redundant three-key category index');
   });
 
   test('the text index is weighted and English, and deliberately not compound', async () => {
@@ -1211,227 +1194,21 @@ if (!URL) {
     await db.collection('item').deleteOne({ _id: doc._id });
   });
 
-  // ---- 20260803142526-seed-demo-company --------------------------------------
+  // ---- the encryption census (ADR-029) ---------------------------------------
   //
-  // The second demo seed: one company, Northwind Trading Ltd, pointed at the shopOwner the first seed
-  // inserts. Ordered after `create-company` because it writes into a collection that migration
-  // creates — a timestamp before it would run against a collection that does not exist yet.
-
-  const COUNT_COMPANY = () => db.collection('company').countDocuments();
-
-  test('the demo seed down removes exactly what it wrote, and up puts it back', async () => {
-    const before = await COUNT_COMPANY();
-    assert.equal(before, SEEDED ? 1 : 0, 'the seeded state going in');
-
-    // No longer the newest migration: ten sort above it and come off first. Three of them drop
-    // collections this test never looks at; `alter-company-public` `$unset`s four fields from every
-    // company but removes none; the four `*-encrypted` steps rewrite fields in place. None of them
-    // inserts or deletes a company, so the count below still reads exactly what the seed did or did
-    // not write.
-    await mm.down(db, client); // 20260808000300-alter-user-encrypted
-    await mm.down(db, client); // 20260808000200-alter-company-encrypted
-    await mm.down(db, client); // 20260808000100-alter-shopOwner-encrypted
-    await mm.down(db, client); // 20260808000000-alter-admin-encrypted
-    await mm.down(db, client); // 20260804050000-index-item-listing-sort
-    await mm.down(db, client); // 20260804040000-index-company-public-read
-    await mm.down(db, client); // 20260804030000-create-item
-    await mm.down(db, client); // 20260804020000-create-itemCategory
-    await mm.down(db, client); // 20260804010000-alter-company-public
-    await mm.down(db, client); // 20260804000000-create-user
-    await mm.down(db, client); // 20260803142526-seed-demo-company
-    assert.equal(await COUNT_COMPANY(), 0, 'down leaves company empty');
-
-    const applied = await mm.up(db, client);
-    assert.equal(applied.length, 11,
-      'the seed, the user creation, the three catalogue migrations, the two index migrations and the four encrypted alters re-applied');
-    assert.equal(await COUNT_COMPANY(), before, 'up restores exactly the state it removed');
-  });
-
-  test.skipIf(!SEEDED)('the demo seed wires the company to the seeded shopOwner', async () => {
-    const company = await db.collection('company').findOne({});
-    const owner = await db.collection('shopOwner').findOne({});
-
-    // Nothing enforces this reference, which is precisely why it is
-    // asserted. A demo database whose reference dangles looks identical from the outside until
-    // something tries to follow it.
-    assert.equal(String(company.idShopOwner), String(owner._id), 'the company belongs to the seeded shopOwner');
-  });
-
-  test.skipIf(!SEEDED)('the seeded company is in New York, not in the Southern Ocean', async () => {
-    // The one thing about a seeded coordinate pair that no validator can catch: [-73.98, 40.74] and
-    // [40.74, -73.98] are both well-formed, both in range, and only one of them is on land.
-    //
-    // Read directly first — longitude first means the first element is the one that cannot exceed 90
-    // without being absurd.
-    const seeded = await db.collection('company').findOne({});
-    const [lng, lat] = seeded.address.position.coordinates;
-    assert.ok(lng > -74 && lng < -73, 'the registered seat is at longitude ~-74, not latitude ~40.7');
-    assert.ok(lat > 40 && lat < 41, 'and at latitude ~40.7');
-
-    // Then through the index `20260804010000-alter-company-public` added, which is what actually
-    // interprets the pair. This is the assertion the transposed reading fails: MongoDB reads element
-    // zero as longitude whatever the seed meant, so a [lat, lng] point sits on the far side of the
-    // planet and falls outside the radius.
-    const near = await db.collection('company')
-      .find({
-        'address.position': {
-          $near: { $geometry: { type: 'Point', coordinates: [-73.9772, 40.7527] }, $maxDistance: 20000 }
-        }
-      })
-      .toArray();
-    assert.equal(near.length, 1, 'the seeded company is within 20 km of midtown Manhattan');
-    assert.equal(String(near[0]._id), String(seeded._id), 'and it is the seeded company that answered');
-  });
-
-  // ---- 20260801000100-index-shopOwner-tbl --------------------------------
-  //
-  // These four back the paginated operator table. Their KEYS are what matters, not merely their
-  // existence: a sorted+skipped query whose sort keys are not a prefix of some index falls back to a
-  // blocking in-memory sort, which MongoDB caps at 32MB and then fails outright. That failure is
-  // data-dependent — it appears the day the collection outgrows the cap, not the day the index is
-  // wrong — so the shape has to be asserted here rather than discovered in production.
-
-  const indexKeys = async (coll, name) =>
-    (await db.collection(coll).indexes()).find((i) => i.name === name)?.key;
-
-  test('the table indexes lead with the filter fields and end on _id', async () => {
-    // Key ORDER is significant, so deepEqual on the whole document — not a membership check.
-    // `deleted`/`disabled` first because `{ $exists: false }` is equality-shaped (the ESR rule);
-    // leading with the sort key instead would still sort from the index but scan the soft-deleted
-    // documents the filter exists to exclude.
-    assert.deepEqual(await indexKeys('shopOwner', 'tbl_active_registeredAt'), {
-      deleted: 1, disabled: 1, registeredAt: -1, _id: -1,
-    });
-    // lastName and firstName share one index in that order: it serves `sortBy: LAST_NAME` (which
-    // tie-breaks on firstName) and, as a prefix, nothing else. firstName alone is NOT a prefix of it, which
-    // is why it gets an index of its own.
-    assert.deepEqual(await indexKeys('shopOwner', 'tbl_active_lastName_firstName'), {
-      deleted: 1, disabled: 1, 'personalData.lastName': 1, 'personalData.firstName': 1, _id: 1,
-    });
-    assert.deepEqual(await indexKeys('shopOwner', 'tbl_active_firstName'), {
-      deleted: 1, disabled: 1, 'personalData.firstName': 1, _id: 1,
-    });
-    assert.deepEqual(await indexKeys('shopOwner', 'tbl_active_city'), {
-      deleted: 1, disabled: 1, 'personalData.address.city': 1, _id: 1,
-    });
-
-    // One direction applied uniformly across every SORT component, `_id` included. That is what
-    // lets a single index serve both ASC and DESC — a compound index satisfies a sort and its
-    // complete inverse, but a mixed sort like `{ lastName: 1, _id: -1 }` is neither, and goes back
-    // to the blocking sort. Per-column sort directions would break here first.
-    //
-    // `deleted`/`disabled` are excluded because they are matched, not sorted: their direction is
-    // irrelevant to whether the index serves an ordering, which is why tbl_active_registeredAt can
-    // pair `{ deleted: 1, disabled: 1 }` with `{ registeredAt: -1, _id: -1 }` and still be uniform.
-    for (const name of ['tbl_active_registeredAt', 'tbl_active_lastName_firstName', 'tbl_active_firstName', 'tbl_active_city']) {
-      const keys = await indexKeys('shopOwner', name);
-      const sortDirections = Object.entries(keys)
-        .filter(([field]) => field !== 'deleted' && field !== 'disabled')
-        .map(([, direction]) => direction);
-      assert.equal(new Set(sortDirections).size, 1, `${name} mixes sort directions`);
-    }
-
-    // None of them is unique: two shopOwners may perfectly well share a city, and a unique
-    // index here would reject the second one at insert time.
-    const built = (await db.collection('shopOwner').indexes()).filter((i) => i.name.startsWith('tbl_active_'));
-    assert.equal(built.length, 4, 'exactly four table indexes');
-    for (const i of built) assert.equal(i.unique, undefined, `${i.name} must not be unique`);
-  });
-
-  test('the table indexes drop on down, and down converges from a partial state', async () => {
-    // Everything listed below sorts newer than the tbl indexes and has to come off before they are
-    // the head.
-    await mm.down(db, client); // 20260808000300-alter-user-encrypted
-    await mm.down(db, client); // 20260808000200-alter-company-encrypted
-    await mm.down(db, client); // 20260808000100-alter-shopOwner-encrypted
-    await mm.down(db, client); // 20260808000000-alter-admin-encrypted
-    await mm.down(db, client); // 20260804050000-index-item-listing-sort
-    await mm.down(db, client); // 20260804040000-index-company-public-read
-    await mm.down(db, client); // 20260804030000-create-item
-    await mm.down(db, client); // 20260804020000-create-itemCategory
-    await mm.down(db, client); // 20260804010000-alter-company-public
-    await mm.down(db, client); // 20260804000000-create-user
-    await mm.down(db, client); // 20260803142526-seed-demo-company
-    await mm.down(db, client); // 20260803000000-create-company
-    await mm.down(db, client); // 20260802000300-alter-shopOwner-position-note
-    await mm.down(db, client); // 20260802000100-index-shopOwner-registeredAt
-    await mm.down(db, client); // 20260801000100-index-shopOwner-tbl
-
-    const names = (await db.collection('shopOwner').indexes()).map((i) => i.name);
-    for (const n of ['tbl_active_registeredAt', 'tbl_active_lastName_firstName', 'tbl_active_firstName', 'tbl_active_city']) {
-      assert.equal(names.includes(n), false, `${n} dropped`);
-    }
-    // The collection's own index is untouched — `down` drops by name, so it cannot take anything
-    // this migration did not create.
-    assert.ok(names.includes('login.email_unique'), 'unrelated index survives the revert');
-
-    // Re-apply everything, then take the newer migrations back off so the tbl-index migration is
-    // once more the head to revert — the partial-state convergence below has to exercise *its* down,
-    // not theirs. Then drop ONE index by hand and revert: `dropIndex` throws IndexNotFound on a
-    // missing index, so an unguarded loop would fail here — which is exactly the state a partially
-    // applied `up` leaves behind. Reverting has to converge from it rather than wedge the database.
-    await mm.up(db, client);
-    await mm.down(db, client); // 20260808000300-alter-user-encrypted
-    await mm.down(db, client); // 20260808000200-alter-company-encrypted
-    await mm.down(db, client); // 20260808000100-alter-shopOwner-encrypted
-    await mm.down(db, client); // 20260808000000-alter-admin-encrypted
-    await mm.down(db, client); // 20260804050000-index-item-listing-sort
-    await mm.down(db, client); // 20260804040000-index-company-public-read
-    await mm.down(db, client); // 20260804030000-create-item
-    await mm.down(db, client); // 20260804020000-create-itemCategory
-    await mm.down(db, client); // 20260804010000-alter-company-public
-    await mm.down(db, client); // 20260804000000-create-user
-    await mm.down(db, client); // 20260803142526-seed-demo-company
-    await mm.down(db, client); // 20260803000000-create-company
-    await mm.down(db, client); // 20260802000300-alter-shopOwner-position-note
-    await mm.down(db, client); // 20260802000100-index-shopOwner-registeredAt
-    await db.collection('shopOwner').dropIndex('tbl_active_firstName');
-    await mm.down(db, client); // 20260801000100-index-shopOwner-tbl — converges from a partial state
-
-    const after = (await db.collection('shopOwner').indexes()).map((i) => i.name);
-    assert.equal(after.some((n) => n.startsWith('tbl_active_')), false, 'revert converges from a partial state');
-
-    const applied = await mm.up(db, client);
-    assert.equal(applied.length, 15,
-      'the tbl indexes, the registeredAt index, the shopOwner alter, the company creation, its seed, the user creation, the three catalogue migrations, the two index migrations and the four encrypted alters re-applied');
-  });
-
-  test('up is idempotent for indexes that already exist', async () => {
-    // createIndex is a no-op for an identical (key, name, options) triple, which is what makes
-    // re-running the migration against a database that already has them safe. Asserted by calling
-    // the migration's own up() twice against the applied state — a second `mm.up` would skip it.
-    // require, not import(): the migrations are CommonJS and migrate-mongo loads them that way too
-    // (`moduleSystem: 'commonjs'`), so this exercises the same module object the runner gets.
-    const migration = require(path.join(MIGRATIONS_DIR, '20260801000100-index-shopOwner-tbl.js'));
-
-    await migration.up(db);
-    await migration.up(db);
-
-    const names = (await db.collection('shopOwner').indexes()).filter((i) => i.name.startsWith('tbl_active_'));
-    assert.equal(names.length, 4, 'no duplicate indexes after a second up');
-  });
-
-  // ---- 20260808000000 / 000100 / 000200 / 000300 — the four encrypted alters ----
-  //
-  // ADR-029. Explicit CSFLE: MongoDB Community supports neither automatic encryption nor Queryable
-  // Encryption, so a value is encrypted by the application before it is written and decrypted after
-  // it is read, and the server only ever sees `binData` subtype 6.
-  //
-  // ⚠️ These four are the only migrations here whose `up` is validator-first and data-second, the
-  // reverse of every other alter in this directory. The usual order exists because a `$unset` has to
-  // run before a validator that forbids the field. These forbid nothing — they make a field's OLD
-  // type illegal — so the writes that convert it have to land under the NEW validator or be refused
-  // one at a time. `down` is the same argument mirrored, and is validator-first too.
+  // Explicit CSFLE: MongoDB Community supports neither automatic encryption nor Queryable Encryption,
+  // so a value is encrypted by the application before it is written and decrypted after it is read,
+  // and the server only ever sees `binData` subtype 6. Every collection here declares that in its
+  // FIRST validator — there is no conversion migration and no plaintext era to convert from.
   //
   // ⚠️ A field-level rule cannot survive encryption. `maxLength`, `minLength`, `pattern` and the
-  // per-axis coordinate bounds all describe a value the server can read, and past this migration it
-  // reads a byte string. Every one of them is asserted below against the RESTORED validator, which
-  // is the only state in which they still mean anything — losing that would leave those rules
-  // written down in `lib/schemas/` and checked nowhere.
+  // per-axis coordinate bounds all describe a value the server can read, and it reads a byte string.
+  // Wherever a field is ciphertext here, its bound holds in the GraphQL input validation instead —
+  // which is why `lib/schemas/geo.js` refuses to attach a `maxLength` to an encrypted street at all.
 
-  test('the encrypted alters convert the personal fields, and only those', async () => {
+  test('every personal field is ciphertext, and the ones that are not are argued', async () => {
     // The census: what this platform treats as personal data, in one place, per collection. A field
-    // that arrives later and belongs on the left must be added to a migration, not to this list.
+    // that arrives later and belongs on the left must be added to a validator, not to this list.
     const CIPHERTEXT = {
       admin: ['login.email', 'personalData.firstName', 'personalData.lastName'],
       shopOwner: [
@@ -1486,19 +1263,9 @@ if (!URL) {
       }
     }
 
-    // `user.addresses` is the one encrypted block behind an array, and the element schema is reached
-    // through `items` rather than `properties` — which is also why `20260808000300` converts no
-    // stored data: the walker in lib/encryption.js deliberately does not cross an array.
-    const userSchema = jsonSchemaOf((await collInfo('user')).options.validator);
-    const element = userSchema.properties.addresses.items;
-    for (const member of ['label', 'street', 'postalCode', 'city', 'province', 'position']) {
-      assert.equal(element.properties[member].bsonType, 'binData', `user.addresses[].${member} must be ciphertext`);
-    }
-    assert.equal(element.properties._id.bsonType, 'objectId', 'the address id must stay an objectId');
-
-    // The catalogue holds no personal data at all, so neither migration touched it. Asserted rather
-    // than left implicit: an `item` is domain-neutral by ADR-008 and a personal field arriving in one
-    // would be a design mistake before it was an encryption one.
+    // The catalogue holds no personal data at all. Asserted rather than left implicit: an `item` is
+    // domain-neutral by ADR-008 and a personal field arriving in one would be a design mistake before
+    // it was an encryption one.
     for (const collection of ['item', 'itemCategory']) {
       const { properties } = jsonSchemaOf((await collInfo(collection)).options.validator);
       const encrypted = Object.entries(properties).filter(([, shape]) => shape.bsonType === 'binData');
@@ -1506,214 +1273,189 @@ if (!URL) {
     }
   });
 
-  test('the encrypted downs restore the plaintext validators, rules included', async () => {
-    await mm.down(db, client); // 20260808000300-alter-user-encrypted
-    await mm.down(db, client); // 20260808000200-alter-company-encrypted
-    await mm.down(db, client); // 20260808000100-alter-shopOwner-encrypted
-    await mm.down(db, client); // 20260808000000-alter-admin-encrypted
+  // ---- the demo seed ---------------------------------------------------------
 
-    const shopOwner = jsonSchemaOf((await collInfo('shopOwner')).options.validator);
-    const address = shopOwner.properties.personalData.properties.address;
-    assert.equal(address.properties.street.maxLength, 250, "the shopOwner street bound (250, not company's 100)");
-    assert.equal(address.properties.postalCode.minLength, 5, 'postal code lower bound');
-    assert.equal(address.properties.postalCode.maxLength, 5, 'postal code upper bound');
-    assert.equal(address.properties.province.minLength, 2, 'province lower bound');
-    assert.equal(address.properties.province.maxLength, 2, 'province upper bound');
-    // The point comes back as the tuple form, per-axis bounds and all — the same one `company`
-    // carries in every state, which is what makes the two collections one claim.
-    assertGeoJsonTuple(address.properties.position.properties.coordinates);
-    assert.equal(shopOwner.properties.personalData.properties.birth.properties.date.bsonType, 'date',
-      'a date of birth is a date again');
-    assert.equal(shopOwner.properties.personalData.properties.contacts.properties.mobile.maxLength, 12, 'mobile bound');
-    assert.equal(shopOwner.properties.notes.maxLength, 2000, 'the operator note is capped at 2000 again');
-    assert.equal(shopOwner.properties.emailVerify.properties.newEmailTmp.maxLength, 250, 'newEmailTmp bound');
-    assert.equal(shopOwner.properties.login.properties.email.maxLength, 250, 'the login address bound');
-
-    const admin = jsonSchemaOf((await collInfo('admin')).options.validator);
-    assert.equal(admin.properties.personalData.properties.firstName.maxLength, 100, 'admin given-name bound');
-    assert.equal(admin.properties.personalData.properties.lastName.maxLength, 100, 'admin family-name bound');
-
-    const company = jsonSchemaOf((await collInfo('company')).options.validator);
-    assert.equal(company.properties.contactPerson.maxLength, 50, 'contactPerson bound');
-    assert.equal(company.properties.administrator.maxLength, 50, 'administrator bound');
-    // ⚠️ Both `down`s restate the whole validator, and `company`'s is the `$and` pair. Passing the
-    // schema half alone would silently drop the publish rule — asserted here because nothing else
-    // between this line and a shop going live without a URL would notice.
-    assert.ok(Array.isArray((await collInfo('company')).options.validator.$and), 'company keeps its $and pair');
-    assert.ok(Array.isArray((await collInfo('user')).options.validator.$and), 'user keeps its $and pair');
-
-    const element = jsonSchemaOf((await collInfo('user')).options.validator).properties.addresses.items;
-    assert.equal(element.properties.label.maxLength, 50, 'the address label bound');
-    assertGeoJsonTuple(element.properties.position.properties.coordinates);
-
-    // And the writes each state accepts are exactly swapped: plaintext in, ciphertext out.
-    await accepts('shopOwner', validShopOwner(undefined, { encrypted: false }));
-    await rejects('shopOwner', validShopOwner());
-
-    assert.equal((await mm.up(db, client)).length, 4, 'the four encrypted alters re-applied');
-  });
-
-  test('the conversion round-trips a stored document, and touches nothing outside the plan', async () => {
+  test('the demo seed encrypts before it writes, and its down removes exactly what it wrote', async () => {
     // ⚠️ The one test in this repo that runs a real `ClientEncryption` against a real 96-byte key —
-    // see the CSFLE block in `beforeAll`. Everything else here uses the opaque `cipher()` fixture,
-    // which the server cannot tell from the real thing but libmongocrypt can.
+    // see the CSFLE block in `beforeAll`. Everything above uses the opaque `cipher()` fixture, which
+    // the server cannot tell from the real thing but libmongocrypt can.
     //
-    // Down to the plaintext validators, plant one shop owner, up again: `encryptStored` is the only
-    // thing standing between the two states, so whatever changed is what it did — and whatever did
-    // not change is what it left alone, which is the half a validator assertion cannot make.
-    await mm.down(db, client); // 20260808000300-alter-user-encrypted
-    await mm.down(db, client); // 20260808000200-alter-company-encrypted
-    await mm.down(db, client); // 20260808000100-alter-shopOwner-encrypted
-    await mm.down(db, client); // 20260808000000-alter-admin-encrypted
-
-    const plain = validShopOwner({ valid: true, hash: 'z'.repeat(50), newEmailTmp: 'moved@t.co' }, { encrypted: false });
-    plain.notes = 'Operator note';
-    plain.personalData.address.position = { type: 'Point', coordinates: [new Double(9.6), new Double(45.6)] };
-    plain.personalData.contacts.landline = '035';
-    await db.collection('shopOwner').insertOne(plain);
-
-    // One document per converting collection, because each carries its OWN field list and its own
-    // data key: a plan that named the wrong collection or the wrong key would still convert a shop
-    // owner correctly and leave the other two silently untouched.
-    const plainAdmin = validAdmin({ encrypted: false });
-    const plainCompany = validCompany({ encrypted: false });
-    await db.collection('admin').insertOne(plainAdmin);
-    await db.collection('company').insertOne(plainCompany);
-
-    assert.equal((await mm.up(db, client)).length, 4, 'the four encrypted alters re-applied');
-
-    const stored = await db.collection('shopOwner').findOne({ _id: plain._id });
-    const at = (document, dotted) => dotted.split('.').reduce((node, segment) => node[segment], document);
-    const isCiphertext = (value) => value instanceof Binary && value.sub_type === Binary.SUBTYPE_ENCRYPTED;
-
-    // Every one of the eleven planned paths is subtype 6 now, whatever it was before — a string, a
-    // Date, or the whole GeoJSON object.
-    for (const p of ['login.email', 'notes', 'emailVerify.newEmailTmp', 'personalData.birth.date',
-      'personalData.address.street', 'personalData.address.postalCode', 'personalData.address.province',
-      'personalData.address.position', 'personalData.contacts.mobile', 'personalData.contacts.landline',
-      'personalData.contacts.email']) {
-      const value = at(stored, p);
-      assert.ok(value instanceof Binary, `${p} is binData`);
-      assert.equal(value.sub_type, Binary.SUBTYPE_ENCRYPTED, `${p} is subtype 6`);
+    // The seed is popped and driven by hand with `SEED_DEMO` forced on, so this runs identically
+    // under `yarn test` and `yarn test:seed` — the flag decides whether a *developer* gets demo data,
+    // and it must not decide whether the encryption path is ever exercised. Under `yarn test` the pop
+    // is a no-op; under `yarn test:seed` it deletes the three documents the run inserted. Either way
+    // the three collections are empty of demo data at this line.
+    await mm.down(db, client); // 20260301000600-seed-demo
+    for (const c of ['admin', 'shopOwner', 'company']) {
+      assert.equal(await db.collection(c).countDocuments(), 0, `${c} empty before the seed is driven by hand`);
     }
 
-    // And nothing outside the plan moved. The three sort keys above all: a conversion that took them
-    // would leave the operator table sorting on ciphertext, which fails silently rather than loudly.
-    assert.equal(stored.personalData.firstName, 'M', 'the given name is untouched');
-    assert.equal(stored.personalData.lastName, 'R', 'the family name is untouched');
-    assert.equal(stored.personalData.address.city, 'C', 'the city is untouched');
-    assert.equal(stored.login.password, plain.login.password, 'the bcrypt hash is untouched');
-    assert.equal(stored.emailVerify.hash, 'z'.repeat(50), 'the verification token is untouched');
-    assert.deepEqual(stored.registeredAt, plain.registeredAt, 'the registration instant is untouched');
+    // ⚠️ **Evicted from `require.cache` first, and that is not hygiene.** Everything above the
+    // exports in that file — the bcrypt hash, the three demo documents, the three encryption plans —
+    // is top-level code, evaluated once per process, and migrate-mongo already loaded it in
+    // `beforeAll`. A plain `require` hands back that first evaluation, so nothing in the module body
+    // executes while this test is the running test, `yarn test:mutation` attributes every literal in
+    // it to whichever suite happened to load it first, and 45 mutants this test would otherwise kill
+    // are reported as survivors instead. `test/migrationCalls.test.mjs` carries `evictLib()` for the
+    // same reason, and `lib/schemas/README.md` states the rule.
+    delete require.cache[require.resolve(SEED_PATH)];
+    const seed = require(SEED_PATH);
+    const savedFlag = process.env.SEED_DEMO;
+    process.env.SEED_DEMO = 'true';
 
-    // The operator: both names as well as the login address, because nothing sorts or searches this
-    // collection. The bcrypt hash stays readable — it is not personal data, and it is compared by the
-    // application rather than by a query.
-    const storedAdmin = await db.collection('admin').findOne({ _id: plainAdmin._id });
-    for (const p of ['login.email', 'personalData.firstName', 'personalData.lastName']) {
-      assert.ok(isCiphertext(at(storedAdmin, p)), `admin.${p} is subtype 6`);
-    }
-    assert.equal(storedAdmin.login.password, plainAdmin.login.password, 'the operator bcrypt hash is untouched');
-
-    // The company: the two people named on it, and nothing else. Everything left readable here is
-    // either a matter of public record or what the storefront hands to anonymous visitors — and three
-    // of the four assertions below are index keys, so a conversion that took them would break a read
-    // rather than slow one.
-    const storedCompany = await db.collection('company').findOne({ _id: plainCompany._id });
-    for (const p of ['contactPerson', 'administrator']) {
-      assert.ok(isCiphertext(at(storedCompany, p)), `company.${p} is subtype 6`);
-    }
-    assert.equal(storedCompany.legalName, plainCompany.legalName, 'the registered name is untouched');
-    assert.equal(storedCompany.vatNumber, plainCompany.vatNumber, 'the VAT number is untouched');
-    assert.equal(storedCompany.certifiedEmail, plainCompany.certifiedEmail, 'the certified address is untouched');
-    assert.deepEqual(storedCompany.address.position, { type: 'Point', coordinates: [9.6, 45.6] },
-      'the shop point is untouched — address.position_2dsphere and the map both read it');
-
-    // ⚠️ One data key per converting collection, named after it, and NOT one shared key. Asserted
-    // before the test mints anything of its own below, because `openEncryption` creates a key the
-    // moment it fails to find one — after that line this count proves nothing. `user` is absent on
-    // purpose: its migration converts no document, so it never opens an encryption handle at all.
-    const vault = await db.collection('__keyVault').find({}, { projection: { keyAltNames: 1 } }).toArray();
-    assert.deepEqual(vault.flatMap(({ keyAltNames }) => keyAltNames).sort(), ['admin', 'company', 'shopOwner'],
-      'one data key per converted collection, under its own alt name');
-
-    // ⚠️ Running a conversion twice converts nothing the second time — which is what makes a run that
-    // died halfway resumable, and what stops a re-run turning ciphertext into ciphertext-of-ciphertext
-    // that no `down` could unwind. Driven directly, because migrate-mongo will not re-apply a
-    // migration its changelog already carries.
-    //
-    // ⚠️ And it runs here with `CSFLE_MASTER_KEY_PATH` REMOVED, which is the sharp end of the same
-    // claim: a migration with nothing left to convert must not so much as open a `ClientEncryption`,
-    // because that is what lets these four apply on a machine with no master key — every replay from
-    // empty, the test database included, and a fresh clone that has never been handed the key. A
-    // version that opened the handle first and found nothing to do second would pass every assertion
-    // below and fail on a developer's laptop.
-    const keyPath = process.env.CSFLE_MASTER_KEY_PATH;
-    delete process.env.CSFLE_MASTER_KEY_PATH;
     try {
-      await require(path.join(MIGRATIONS_DIR, '20260808000100-alter-shopOwner-encrypted.js')).up(db, client);
+      await seed.up(db, client);
+
+      // The operator: both names as well as the login address, because nothing sorts or searches this
+      // collection. The bcrypt hash stays readable — it is not personal data, and it is compared by
+      // the application rather than by a query.
+      const admin = await db.collection('admin').findOne({});
+      for (const p of ['login.email', 'personalData.firstName', 'personalData.lastName']) {
+        assert.ok(isCiphertext(at(admin, p)), `admin.${p} is subtype 6`);
+      }
+      assert.match(admin.login.password, /^\$2y\$14\$/, 'the bcrypt hash is stored as written');
+
+      // The shop owner. Seven of the eleven planned paths are present on this document and all seven
+      // are subtype 6 — whatever they were before: a string, or a Date.
+      const owner = await db.collection('shopOwner').findOne({});
+      for (const p of ['login.email', 'personalData.birth.date', 'personalData.address.street',
+        'personalData.address.postalCode', 'personalData.address.province',
+        'personalData.contacts.mobile', 'personalData.contacts.email']) {
+        assert.ok(isCiphertext(at(owner, p)), `shopOwner.${p} is subtype 6`);
+      }
+      // ⚠️ And the other four are ABSENT rather than encrypted-from-nothing. The plan names every
+      // path the collection can carry; the document carries some of them. A plan applied blindly
+      // would write four `null`s into fields typed `binData` and be refused by the validator — so
+      // "encrypt what is there" is the behaviour, and this is where it is pinned.
+      assert.equal('notes' in owner, false, 'no operator note was written, so none was encrypted');
+      assert.equal('emailVerify' in owner, false, 'and no pending email change');
+      assert.equal('landline' in owner.personalData.contacts, false, 'and no landline');
+      assert.equal('position' in owner.personalData.address, false, 'and no coordinate — the seed types the address');
+      // Nothing outside the plan moved. The three sort keys above all: a conversion that took them
+      // would leave the operator table sorting on ciphertext, which fails silently rather than loudly.
+      assert.equal(owner.personalData.firstName, 'John', 'the given name is in the clear');
+      assert.equal(owner.personalData.lastName, 'Carter', 'the family name is in the clear');
+      assert.equal(owner.personalData.address.city, 'Boston', 'and so is the city');
+      assert.deepEqual(owner.registeredAt, new Date('2026-01-24T15:17:00Z'), 'the registration instant is untouched');
+
+      // The company: the two people named on it, and nothing else. Everything left readable is either
+      // a matter of public record or what the storefront hands to anonymous visitors — and the point
+      // below is an index key, so a conversion that took it would break a read rather than slow one.
+      const company = await db.collection('company').findOne({});
+      for (const p of ['contactPerson', 'administrator']) {
+        assert.ok(isCiphertext(at(company, p)), `company.${p} is subtype 6`);
+      }
+      // The registry record, value for value. All of it is in the clear and all of it is meant to
+      // be: it is what a registrar already publishes about the entity, and three of these fields
+      // carry a `pattern` or a length the server can only enforce on a value it can read.
+      assert.equal(company.legalName, 'Northwind Trading Ltd', 'the registered name is in the clear');
+      assert.equal(company.vatNumber, '02554785963', 'and the VAT number');
+      assert.equal(company.taxCode, '02554785963', 'and the tax code, which is the same 11 digits here');
+      assert.equal(company.uniqueCode, '548XS3W', 'and the e-invoicing recipient code');
+      assert.equal(company.certifiedEmail, 'certified@northwind.example', 'and the certified address');
+      assert.equal(company.registryExtract, 'registryExtract.pdf', 'and the path to the registry extract');
+      // The registered seat, likewise clear and likewise deliberate — `published_city_publicName`
+      // sorts on the city and `address.position_2dsphere` reads the point, and neither survives
+      // ciphertext. Asserted whole rather than field by field, because a missing member of this
+      // block is as wrong as a changed one.
+      assert.deepEqual(company.address, {
+        street: '350 Fifth Avenue',
+        postalCode: '10118',
+        city: 'New York',
+        province: 'NY',
+        position: { type: 'Point', coordinates: [-73.98566, 40.74844] }
+      }, 'the seat is stored as written, point included');
+      // Seeded unpublished, and honestly so: it has no slug and no publicName, and the `$expr` clause
+      // would refuse to let it go live without them. Putting the demo shop on the storefront is a
+      // decision about demo content, not about the schema.
+      assert.equal(company.published, false, 'the demo shop is not live');
+      // Nothing enforces this reference, which is precisely why it is asserted. A demo database whose
+      // reference dangles looks identical from the outside until something tries to follow it.
+      assert.ok(company.idShopOwner.equals(owner._id), 'the company belongs to the seeded shop owner');
+
+      // ⚠️ The one thing about a seeded coordinate pair that no validator can catch: [-73.98, 40.74]
+      // and [40.74, -73.98] are both well-formed, both in range, and only one of them is on land.
+      // Asserted through the index, which is what actually interprets the pair — MongoDB reads
+      // element zero as longitude whatever the seed meant, so a transposed point sits on the far side
+      // of the planet and falls outside the radius.
+      const near = await db.collection('company')
+        .find({
+          'address.position': {
+            $near: { $geometry: { type: 'Point', coordinates: [-73.9772, 40.7527] }, $maxDistance: 20000 }
+          }
+        })
+        .toArray();
+      assert.equal(near.length, 1, 'the seeded company is within 20 km of midtown Manhattan');
+      assert.ok(near[0]._id.equals(company._id), 'and it is the seeded company that answered');
+
+      // ⚠️ One data key per seeded collection, named after it, and NOT one shared key. Asserted
+      // before anything below mints one of its own, because `openEncryption` creates a key the moment
+      // it fails to find one — after that line this count proves nothing.
+      const vault = await db.collection('__keyVault').find({}, { projection: { keyAltNames: 1 } }).toArray();
+      assert.deepEqual(vault.flatMap(({ keyAltNames }) => keyAltNames).sort(), ['admin', 'company', 'shopOwner'],
+        'one data key per seeded collection, under its own alt name');
+
+      // ⚠️ The reason `login.email` is DETERMINISTIC and the rest are not: encrypting the same address
+      // again produces the same bytes, so the account is still findable by it and `login.email_unique`
+      // still constrains something. Every login on the platform is this query.
+      const { openEncryption, ALGORITHM_DETERMINISTIC, ALGORITHM_RANDOM } = require('../lib/encryption.js');
+      const encryption = await openEncryption(client, 'shopOwner');
+      const lookup = await encryption.encrypt('shopOwner@thedoctorweb.com',
+        { keyAltName: 'shopOwner', algorithm: ALGORITHM_DETERMINISTIC });
+      const found = await db.collection('shopOwner').findOne({ 'login.email': lookup });
+      assert.ok(found, 'the account is findable by deterministically encrypted login address');
+      assert.ok(found._id.equals(owner._id), 'and it is the right account');
+
+      // The mirror of that claim, and the reason everything else is random: a random ciphertext of the
+      // same value differs every time, so no equality query can reach it — which is what makes it the
+      // right default for anything nothing looks up.
+      const twice = await Promise.all([0, 1].map(() =>
+        encryption.encrypt('395458770', { keyAltName: 'shopOwner', algorithm: ALGORITHM_RANDOM })));
+      assert.equal(Buffer.from(twice[0].buffer).equals(Buffer.from(twice[1].buffer)), false,
+        'random ciphertext differs on every encryption');
+
+      // ⚠️ **Subtype 6 is not evidence that the right value went in.** A plan that encrypted an
+      // empty string, or the field next to the one it meant, produces a blob no assertion above can
+      // tell from the correct one — so every path this test can only see as ciphertext is read back
+      // through the same key here. The clear fields need none of this: they are compared value for
+      // value where they are read. One `ClientEncryption` decrypts all three collections, because a
+      // ciphertext names the data key that made it and the vault holds all three.
+      for (const [document, field, expected] of [
+        [admin, 'login.email', 'info@thedoctorweb.com'],
+        [admin, 'personalData.firstName', 'John'],
+        [admin, 'personalData.lastName', 'Carter'],
+        [owner, 'personalData.birth.date', new Date('1970-11-24T00:00:00Z')],
+        [owner, 'personalData.address.street', '12 Market Street'],
+        [owner, 'personalData.address.postalCode', '02108'],
+        [owner, 'personalData.address.province', 'MA'],
+        [owner, 'personalData.contacts.mobile', '395458770'],
+        [owner, 'personalData.contacts.email', 'shopOwner@thedoctorweb.com'],
+        [company, 'contactPerson', 'John Carter'],
+        [company, 'administrator', 'John Carter']
+      ]) {
+        assert.deepEqual(await encryption.decrypt(at(document, field)), expected,
+          `${field} decrypts to what the seed wrote`);
+      }
+
+      // ⚠️ `down` deletes by the same fixed `_id`s `up` inserted, and takes no client and no master
+      // key — deleting needs neither, and requiring one would make a rollback impossible on a machine
+      // that has the seeded database but not the key.
+      await seed.down(db);
+      for (const c of ['admin', 'shopOwner', 'company']) {
+        assert.equal(await db.collection(c).countDocuments(), 0, `${c} emptied by the seed's down`);
+      }
     } finally {
-      process.env.CSFLE_MASTER_KEY_PATH = keyPath;
+      if (savedFlag === undefined) delete process.env.SEED_DEMO;
+      else process.env.SEED_DEMO = savedFlag;
     }
-    const rerun = await db.collection('shopOwner').findOne({ _id: plain._id });
-    assert.ok(Buffer.from(rerun.login.email.buffer).equals(Buffer.from(stored.login.email.buffer)),
-      'a second up leaves the bytes identical — nothing is encrypted twice');
 
-    // ⚠️ The reason `login.email` is DETERMINISTIC and the other ten are not: encrypting the same
-    // address again produces the same bytes, so the account is still findable by it and
-    // `login.email_unique` still means something. Every login on the platform is this query.
-    const { openEncryption, ALGORITHM_DETERMINISTIC, ALGORITHM_RANDOM } = require('../lib/encryption.js');
-    const encryption = await openEncryption(client, 'shopOwner');
-    const lookup = await encryption.encrypt(plain.login.email,
-      { keyAltName: 'shopOwner', algorithm: ALGORITHM_DETERMINISTIC });
-    const found = await db.collection('shopOwner').findOne({ 'login.email': lookup });
-    assert.ok(found, 'the account is findable by deterministically encrypted login address');
-    assert.ok(found._id.equals(plain._id), 'and it is the right account');
-
-    // The mirror of that claim, and the reason the other ten are random: a random ciphertext of the
-    // same value differs every time, so no equality query can reach it — which is what makes it the
-    // right default for anything nothing looks up.
-    const twice = await Promise.all([0, 1].map(() =>
-      encryption.encrypt(plain.personalData.contacts.mobile, { keyAltName: 'shopOwner', algorithm: ALGORITHM_RANDOM })));
-    assert.equal(Buffer.from(twice[0].buffer).equals(Buffer.from(twice[1].buffer)), false,
-      'random ciphertext differs on every encryption');
-
-    // The round trip: `decrypt` needs neither the algorithm nor the key name — both ride inside the
-    // blob — so a `down` is exact rather than lossy, and needs nothing but the master key.
-    await mm.down(db, client); // 20260808000300-alter-user-encrypted
-    await mm.down(db, client); // 20260808000200-alter-company-encrypted
-    await mm.down(db, client); // 20260808000100-alter-shopOwner-encrypted
-    await mm.down(db, client); // 20260808000000-alter-admin-encrypted
-
-    const back = await db.collection('shopOwner').findOne({ _id: plain._id });
-    assert.equal(back.login.email, plain.login.email, 'the login address came back');
-    assert.equal(back.notes, 'Operator note', 'the operator note came back');
-    assert.equal(back.emailVerify.newEmailTmp, 'moved@t.co', 'the pending address came back');
-    assert.equal(back.personalData.address.street, 'Via', 'the street came back');
-    assert.equal(back.personalData.address.postalCode, '24030', 'the postal code came back');
-    assert.equal(back.personalData.address.province, 'BG', 'the province came back');
-    assert.equal(back.personalData.contacts.mobile, '333', 'the mobile came back');
-    assert.equal(back.personalData.contacts.landline, '035', 'the landline came back');
-    assert.equal(back.personalData.contacts.email, plain.personalData.contacts.email, 'the contact address came back');
-    // A Date and a whole GeoJSON object, both restored as their BSON types rather than as strings:
-    // `encrypt` takes any BSON value, not only a string, which is what lets the point be one blob.
-    assert.deepEqual(back.personalData.birth.date, new Date('1970-11-24T00:00:00Z'), 'the date of birth came back a Date');
-    assert.deepEqual(back.personalData.address.position, { type: 'Point', coordinates: [9.6, 45.6] },
-      'the point came back a GeoJSON object');
-
-    const backAdmin = await db.collection('admin').findOne({ _id: plainAdmin._id });
-    assert.equal(backAdmin.login.email, plainAdmin.login.email, 'the operator login address came back');
-    assert.equal(backAdmin.personalData.firstName, 'Op', 'the operator given name came back');
-    assert.equal(backAdmin.personalData.lastName, 'Erator', 'the operator family name came back');
-
-    const backCompany = await db.collection('company').findOne({ _id: plainCompany._id });
-    assert.equal(backCompany.contactPerson, 'Contact P', 'the contact person came back');
-    assert.equal(backCompany.administrator, 'Admin A', 'the administrator came back');
-
-    await db.collection('shopOwner').deleteOne({ _id: plain._id });
-    await db.collection('admin').deleteOne({ _id: plainAdmin._id });
-    await db.collection('company').deleteOne({ _id: plainCompany._id });
-    assert.equal((await mm.up(db, client)).length, 4, 'the four encrypted alters re-applied');
+    // Back to the state the run as a whole is in: re-applying restores the demo data under
+    // `yarn test:seed` and writes nothing under `yarn test`.
+    assert.equal((await mm.up(db, client)).length, 1, 'the seed migration re-applied');
+    const expected = SEEDED ? 1 : 0;
+    for (const c of ['admin', 'shopOwner', 'company']) {
+      assert.equal(await db.collection(c).countDocuments(), expected, `${c} back to the run's seeded state`);
+    }
   });
 
   test('down reverts every migration', async () => {
