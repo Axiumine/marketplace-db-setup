@@ -5,8 +5,9 @@ collections, attach `$jsonSchema` validators, build indexes and optionally seed 
 [migrate-mongo](https://github.com/seppevs/migrate-mongo); the hand-rolled `revApp` runner it replaced is
 gone and must not come back.
 
-**Read parent first** — `/media/nvme/websites/fullstack-marketplace-blueprint/CLAUDE.md`. One of fourteen
-sub-repos.
+**Read parent first** — `/media/nvme/websites/fullstack-marketplace-blueprint/CLAUDE.md`
+(<https://github.com/Axiumine/fullstack-marketplace-blueprint> if you are reading this on GitHub).
+One of fourteen sub-repos.
 
 | Need | File |
 |---|---|
