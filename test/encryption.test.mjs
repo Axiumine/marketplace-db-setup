@@ -1,8 +1,8 @@
 // Unit tests for the four guards in `lib/encryption.js` that a working migration never trips.
 //
 // `test/migrations.test.mjs` drives the whole of that file against a real MongoDB and a real master
-// key — the conversion, both directions, and the deterministic lookup the encryption exists to make
-// possible. What it cannot drive is the file refusing to run: every one of these branches is entered
+// key — the demo seed encrypting field by field before it writes, and the deterministic lookup the
+// encryption exists to make possible. What it cannot drive is the file refusing to run: every one of these branches is entered
 // only when the environment is wrong, and an environment that is wrong produces no migration at all
 // rather than a bad one.
 //
@@ -24,7 +24,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { createRequire } from 'node:module';
 
-// `require`, not `import()`, for the reason spelled out at length in test/migrationGuards.test.mjs:
+// `require`, not `import()`, for the reason spelled out at length in test/migrations.test.mjs:
 // the migration suite loads this same CommonJS file through node's own loader, and pulling in a
 // vite-transformed second copy hands v8 two scripts for one path whose coverage ranges do not merge.
 const require = createRequire(import.meta.url);

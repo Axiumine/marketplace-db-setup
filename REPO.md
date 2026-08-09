@@ -17,10 +17,10 @@ carries the rules; `README.md` is the human-facing document.
 ## How migrate-mongo tracks state
 
 - A `changelog` collection records each applied migration filename + timestamp. `up` applies every file
-  not yet in `changelog`, in filename order; `down` reverts the most recent. This replaced the old
-  `revApp` revision integers.
+  not yet in `changelog`, in filename order; `down` reverts the most recent.
 - Order is the filename timestamp prefix (`YYYYMMDDHHMMSS-…`), so `migrate:create` keeps it correct. There
-  are no FK constraints in Mongo, so create-order between collections is cosmetic.
+  are no FK constraints in Mongo, so create-order between collections is cosmetic — except that the seed
+  must come last, since it writes into all three collections it depends on.
 - A `changelog_lock` collection serialises concurrent runs. **This only started working at migrate-mongo
   v12** — v11 accepted `lockCollectionName` and ignored it, so the key sat in the config doing nothing for
   the whole life of the repo. v12+ also requires `lockTtl` alongside it: leave it out and the TTL index is
@@ -73,12 +73,12 @@ of those databases; `setup/mongodb.js` carries the loop that creates them. Dropp
 remove them — MongoDB keeps every user document in `admin.system.users` whatever its authentication
 database is.
 
-**Five suites, 86 tests.** `yarn test` reports **84 passed | 2 skipped**, `yarn test:seed` **86 passed**;
-both exit 0. The two are the seed-content tests, which `test.skipIf(!SEEDED)` stands down when there is
-nothing seeded to look at — the counts they would read are asserted as zero by the seed-count test either
-way. ⚠️ Those numbers date from the catalogue landing; run `yarn test` to confirm them on a real database
-rather than trusting this file after the next change. It is fast, so a long run means something is wrong,
-not that the suite is heavy.
+**Five suites, 70 tests.** `yarn test` and `yarn test:seed` both report **70 passed**, nothing skipped, and
+both exit 0. Nothing here stands down when `SEED_DEMO` is off: the seed-count test asserts zero instead of
+one, and the test that drives the seeded `up` pops the seed migration and forces the flag on for the
+length of one test, so the encryption path is exercised either way. ⚠️ Those numbers date from the last
+change to `migrations/`; run `yarn test` to confirm them on a real database rather than trusting this file.
+It is fast — about a second — so a long run means something is wrong, not that the suite is heavy.
 
 ### When it goes wrong
 
@@ -104,65 +104,53 @@ failure rather than as slowness. Redirect to a file instead of piping, either wa
 
 Every migration applies and is logged in `changelog`; `up` is idempotent; all 6 collections exist with
 strict validators; every expected index is present by name; validators reject bad documents and accept good
-ones (including the `city` `maxLength` fix and `company`'s per-axis coordinate bounds); a `$near` query
+ones (including the `city` `maxLength` rule and `company`'s per-axis coordinate bounds); a `$near` query
 resolves the seeded company to midtown Manhattan rather than to its transposed reading; demo-seed counts
 match `SEED_DEMO`; `down` reverts everything (collections dropped, `changelog` emptied).
 
-The four `shopOwner` table indexes (`20260801000100`) additionally get their **key documents** asserted
-with `deepEqual`, not merely their names: key order carries the ESR ordering, and the trailing direction
-has to be uniform across every sort component (`deleted`/`disabled` excluded — those are matched, not
-sorted) or one index stops serving both ASC and DESC. Their `down` is asserted to converge from a partially
-applied state, since `dropIndex` throws `IndexNotFound`.
+⚠️ **There is exactly one `mm.down` ladder in the file and it is the last test.** Every migration here
+creates a collection, so there is no intermediate state to walk to: the migrations are applied once at the
+top and every assertion reads the one state they produce. A test that needs to pop a migration to see what
+it is testing is a sign an alter has crept back in. The one exception is the seeded-`up` test, which pops
+the seed alone — the newest migration, so it always pops exactly `1` — drives it by hand with `SEED_DEMO`
+forced on, and re-applies it.
 
-Both `collMod` alters get the same pair of assertions — that the rest of the validator survived the
-wholesale replace, and that their own `down` restores the previous shape.
+The four `shopOwner` table indexes additionally get their **key documents** asserted with `deepEqual`, not
+merely their names: key order carries the ESR ordering, and the trailing direction has to be uniform across
+every sort component (`deleted`/`disabled` excluded — those are matched, not sorted) or one index stops
+serving both ASC and DESC. `company`'s three listing indexes and `item`'s four get the same treatment, for
+the same reason.
 
-⚠️ **`mm.down` reverts the *most recent* migration, so any newer migration changes what the older
-down-tests pop.** This is the single most common way adding a migration breaks this suite. Four tests carry
-a pop count and **every one of them has to be extended for every migration added** (the newest always pops
-`1`, and every older one gains a pop):
+⚠️ **Two validators are not a bare `$jsonSchema`** — `user`'s and `company`'s — so
+`options.validator.$jsonSchema` is `undefined` on both. The suite carries `jsonSchemaOf()` for the unwrap;
+use it rather than reaching for `.$jsonSchema`, including in an assertion that only ever looks at `company`.
 
-| Test | Pops | `up` re-applies |
-|---|---|---|
-| `emailVerify down strips the field…` | 12 | the same |
-| `the table indexes drop on down…` | 11, then 11 more after the re-`up` | 11 |
-| `the shopOwner alter down strips both fields…` | 9 | 9 |
-| `the demo seed down removes exactly what it wrote…` | 7 | 7 |
+The **encryption census** is one test and the place to add a field: `CIPHERTEXT` lists every path this
+platform treats as personal data, per collection, and `CLEARTEXT` lists the ones a reader would expect
+there and which deliberately are not — the three `shopOwner` sort keys above all. A new personal field
+belongs in a validator and in that list, in the same change.
 
-Each pop is spelled out as its own `await mm.down(db, client)` with the migration filename in a trailing
-comment, so a shifted ladder reads as a diff rather than as a changed integer.
+The **seeded-`up`** test is the only one in the repo that runs a real `ClientEncryption` against a real
+96-byte key: it asserts that the seven planned paths present on the demo shop owner are subtype 6, that the
+four absent ones were **not** invented, that the three sort keys and the company's point were left alone,
+that the vault holds one data key per seeded collection under its own alt name, and that the account is
+still findable by its deterministically encrypted `login.email`. The master key is minted into a temp
+directory by `beforeAll`, which **overwrites** `CSFLE_MASTER_KEY_PATH` and `CSFLE_KEY_VAULT_NAMESPACE`
+rather than defaulting them — honouring a real `.env` pair would point a suite that calls `dropDatabase()`
+at the platform's own key vault.
 
-The symptom when the counts are not extended is not a clear failure at the count — it is a **cascade**: the
-suite runs serially against one database, so a test that stops one migration short leaves the following
-tests reading a validator shape they never asked for, and the run reports a dozen unrelated assertion
-failures (`Missing expected rejection`, and a `down reverts every migration` that dies partway through).
-Read a burst like that as a shifted pop count, not as a dozen problems.
+Fixtures: `cipher()` mints BSON `binData` subtype 6 with bytes that are not a real CSFLE blob and do not
+need to be — every rule it exercises is server-side, and the server never looks inside subtype 6. Making it
+real would make every fixture async, and every call site with it, for a property no assertion reads.
+`validCompany()` draws its `vatNumber`/`certifiedEmail` from the shared `uid()` counter, because both carry
+a global unique index and a literal collides on the second insert of a run. It carries `published: false`,
+which is not decoration — that field is in `required`, so a fixture without it stops being a valid company
+and every `accepts('company', …)` in the file starts failing for a reason unrelated to what it tests.
+`validItemCategory(over)`, `validItem(over)` and `validUser(over)` take an override object because most of
+their tests differ from the minimum by one field; `validItem` mints its two references rather than
+resolving them, since nothing checks them.
 
-⚠️ **Two validators are not a bare `$jsonSchema`** — `user`'s always, and `company`'s since
-`20260804010000` — so `options.validator.$jsonSchema` is `undefined` on both. The suite carries
-`jsonSchemaOf()` for the unwrap; use it rather than reaching for `.$jsonSchema`, including in an assertion
-that only ever looks at `company`.
-
-⚠️ **The seed being newest also means a re-`up` re-seeds.** Read that as the general rule: an "and now it
-is empty" assertion downstream of a seed has to name by `_id` what it expects to be missing rather than
-asserting a count of zero.
-
-`20260802000300-alter-shopOwner-position-note` gets both its fields covered: that `position` landed inside
-`personalData.address` in tuple form and is **not** in that object's `required` array, that `notes` is a
-top-level string capped at 2000 and not required, that the restated `emailVerify`/`resetPwd` rules survived
-the wholesale `collMod`, and that `down` `$unset`s both from stored documents — not merely from the
-validator, since the restored shape is `additionalProperties: false` and a document still carrying either
-would fail its next write.
-
-Fixtures: `validCompany()` draws its `vatNumber`/`certifiedEmail` from the shared `uid()` counter, because
-both carry a global unique index and a literal collides on the second insert of a run. It carries
-`published: false`, which is not decoration — `20260804010000` put that field in `required`, so a fixture
-without it stops being a valid company and every `accepts('company', …)` in the file starts failing for a
-reason unrelated to what it tests. `validItemCategory(over)` and `validItem(over)` take an override object
-because most of their tests differ from the minimum by one field; `validItem` mints its two references
-rather than resolving them, since nothing checks them.
-
-## The five unit suites, and the 100% gates
+## The four unit suites, and the 100% gates
 
 The replay was the only suite here for most of the repo's life, and both this project and
 `vitest.config.mjs` argued coverage should not be gated: a statement gate over migration files would mostly
@@ -172,10 +160,9 @@ answer**. It stopped being fair the moment the unit suites landed.
 
 | Suite | Drives |
 |---|---|
-| `test/migrationGuards.test.mjs` | the five guarded `dropIndex` calls against a fake `db` that fails the drop — once with `IndexNotFound`, which the guard must swallow, once with `Unauthorized`, which it must re-throw. Swallowing the second turns a migration that did nothing into one that reports success. Also runs both seed migrations with `SEED_DEMO=true` and asserts each `down` deletes exactly the `_id`s its `up` wrote, that the company points at the seeded shop owner, and that the demo position is `[-73.98566, 40.74844]` — longitude first, New York and not the Indian Ocean. |
 | `test/mongoUrl.test.mjs` | every branch of `lib/mongoUrl.js`: credentials after the scheme, only the first `://` replaced, percent-encoding, `&authSource=` when a query already exists, no query parameter at all for `undefined` / `''` / `null`, and a missing piece reported under the caller's own variable name. |
 | `test/migrateMongoConfig.test.mjs` | `migrate-mongo-config.js` under stubbed **fake** `MONGO_DEV_*`, asserting the whole exported object with one `deepEqual` — a misspelled key there is not an error, it is a migrate-mongo default silently taking over. |
-| `test/migrationCalls.test.mjs` | the backstop: every migration's `up` and `down` against a recording fake `db`, with the ordered driver-call log frozen as a snapshot. Final state cannot see an intermediate one, and `alter-company-public` is widen → backfill → narrow, where skipping the widen leaves the end state identical. |
+| `test/migrationCalls.test.mjs` | the backstop: every migration's `up` and `down` against a recording fake `db`, with the ordered driver-call log frozen as a snapshot. It is also the only suite that drives the seed with `SEED_DEMO` **off**, where both directions are no-ops and a real database can therefore prove nothing. |
 | `test/encryption.test.mjs` | the four guards in `lib/encryption.js` that a correct environment never trips: `CSFLE_KEY_VAULT_NAMESPACE` unset, set to `''`, `CSFLE_MASTER_KEY_PATH` unset, and a master key that is not exactly 96 bytes. `migrations.test.mjs` drives the conversion itself against a real MongoDB; only these drive the file *refusing to run*. Each passes `null` as the client, which is the proof that all four fire before the connection is touched — one moving below the `ClientEncryption` construction turns the asserted message into a `TypeError`. |
 
 `migrateMongoConfig` had no test of any kind and the coverage gate did not notice: v8 only reports files
@@ -207,13 +194,21 @@ reads one property of a validator with a hundred. Three things closed it, in ord
 
 ⚠️ **A top-level `const` is evaluated once per process, which is why `test/migrationCalls.test.mjs` evicts
 the whole of `lib/` from the CommonJS cache before each load.** `lib/schemas/*` is mostly module-level
-constants (`COORDINATE_TUPLE`, `EMAIL_VERIFY`, `PUBLIC_FIELDS`, `NOTE`), and Stryker switches a mutant on
-per **test** — so a builder loaded before the switch hands every test the unmutated object no matter how
-thoroughly it is asserted. That alone was 54 survivors, and only the shapes built inside a function body
-(`position()`, `address()`) were ever caught. Keep the eviction if you touch that file; the modules are pure
-data, so nothing else observes the reload.
+constants (`COORDINATE_TUPLE`, `EMAIL_VERIFY`, `LOGIN`), and Stryker switches a mutant on per **test** — so
+a builder loaded before the switch hands every test the unmutated object no matter how thoroughly it is
+asserted. That alone was 54 survivors, and only the shapes built inside a function body (`address()`) were
+ever caught. Keep the eviction if you touch that file; the modules are pure data, so nothing else observes
+the reload.
 
-⚠️ **Load a CommonJS file the same way every other caller in the process loads it.** All five unit suites use
+⚠️ **The seed migration is the same trap in a file that is not in `lib/`, and it cost 45 survivors.** Its
+two demo documents, its bcrypt hash and its three encryption plans are all top-level, migrate-mongo loads
+the file in `beforeAll`, and Stryker then credits every literal in it to whichever test happened to trigger
+that first load — never to the test that actually asserts the seeded documents. `test/migrations.test.mjs`
+therefore `delete`s the file from `require.cache` before requiring it, in the one test that drives the
+seeded `up` by hand. The rule generalises: **a test that means to cover module-level code has to be the
+thing that loads the module.**
+
+⚠️ **Load a CommonJS file the same way every other caller in the process loads it.** All four unit suites use
 `createRequire(import.meta.url)`, not `import`, and so does `migrations.test.mjs` for `buildMongoUrl`.
 migrate-mongo requires a migration through node's own loader; an `import()` of the same path goes through
 vite, and v8 then holds **two scripts for one path with different byte offsets**. Merging coverage reports
@@ -294,15 +289,13 @@ glob of `package.json`'s semgrep script can move with it.
 
 ### The bar for extracting a shape
 
-The `lib/schemas/` refactor was proven equivalent before the docs were touched, not asserted: the full `up`
-ladder plus every `down` rung — 31 states — was snapshotted (each collection's `listCollections` options and
-its `indexes()`, minus `v`) before and after, and the two are identical **including JSON key order**. The
-only difference is the order `listCollections` enumerates collections in, which is server-side and not
-schema. `yarn test` and `yarn test:seed` both passed.
+Every `$jsonSchema` here is built by a `lib/schemas/` builder rather than written into the migration, and
+the bar for adding another one is that the builder's output be **identical to the literal it replaces,
+including JSON key order**. Key order is not cosmetic: MongoDB stores a validator as the document it was
+handed, `listCollections` reads it back in that order, and both frozen-shape tests in
+`test/migrations.test.mjs` compare it as text. A shape that "looks the same" is not evidence — diff it.
 
-`20260803000000-create-company`'s validator was extracted to `lib/schemas/company.js` later, when the
-catalogue work needed a second state of that collection, and it was held to the same standard: the
-builder's zero-argument output was diffed against the inlined literal it replaced and is identical
-**including key order**. That is the bar for any future extraction here — a shape that "looks the same" is
-not evidence, because `$jsonSchema` key order is preserved by `collMod` and shows up in every snapshot
-comparison downstream.
+The rule that licenses the directory at all is in `lib/schemas/README.md`: a change under it is followed by
+a full rebuild of every database that has run these migrations, in the same piece of work. What makes the
+extraction safe here is that a create migration produces its collection in one call, so there is exactly one
+state per collection to compare, in one direction.

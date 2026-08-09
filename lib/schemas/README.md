@@ -1,84 +1,75 @@
 # `lib/schemas` — the shared validator shapes
 
-Every `$jsonSchema` in `migrations/` is built from this directory. Before it existed, each migration
-inlined its own copy: 13 identical product validators, 5 restatements of the shop collection, 3 of
-`shopOwner`, 2 of a drink collection. About 3 500 of the repo's 5 100 migration lines were copies of another
-migration, and Qodana reported four `DuplicatedCode` findings that no edit inside `migrations/` could
-have cleared.
+Every `$jsonSchema` in `migrations/` is built from this directory, and every builder here returns
+**one** shape: the shape its collection was created with and still has. There are no flags, no
+historical variants and no `down` that has to reproduce an earlier version, because every migration in
+this repository *creates* a collection and none alters one.
 
-⚠️ **The product-type side of this is gone, and so is the old shop-collection side.** The 13 product
-builders and the delivery-costs builder were dropped along with the customer-ordering scope they
-existed to serve, and the old shop builder and its per-shop taxonomy builder followed (see the parent
-workspace's CLAUDE.md and this repo's own). Those builders are deleted with the migrations that called
-them, so nothing under `migrations/` requires any of them any more.
+⚠️ **Every name in this directory is English** — the builders, their arguments, the exported constants,
+and the `description` strings inside the validators, along with the collection and field names
+themselves. The same name has to spell identically in a migration, a `$jsonSchema`, a Mongoose model, a
+resolver, a GraphQL field and three frontends, and nothing maps between those layers.
 
-⚠️ **`item.js` and `itemCategory.js` are not those files coming back.** The catalogue was rebuilt on a
-different axis: the old product builder existed because 13 collections restated one base shape and
-differed only in their *category*, so the replacement is one `item` collection plus a taxonomy, and a
-fourteenth product type is an `itemCategory` document rather than a builder branch. `itemCategory.js` is
-likewise not the old per-shop taxonomy builder — that shape carried the shop it belonged to, and this
-one has no owner column at all. **Nothing here may presume what is sold**, and do not reintroduce a
-per-type builder: the duplication this directory exists to remove is exactly what a second one would
-restore.
+⚠️ **Nothing here may presume what is sold** (ADR-008). `item.js` is one domain-neutral collection and
+`itemCategory.js` is the taxonomy that gives it meaning; a new product type is an `itemCategory`
+*document*. Do not add a per-type builder — thirteen validators restating one base shape and differing
+only in their category is exactly the duplication this directory exists to prevent.
 
-⚠️ **Every name in this directory is English.** The builders, their flags, the exported constants and
-the `description` strings inside the validators are English, and so are the collection names.
-Older prose below still describes the old shop and taxonomy collections in historical terms — those
-collections are not coming back under any spelling.
+## Why sharing a shape is allowed here, when it usually is not
 
-## Why this is allowed here, when it usually is not
-
-The standing rule in migration tooling — and the rule this repo carried until now — is that a
-migration must be self-contained, because a later edit to a shared helper retroactively changes the
-meaning of a migration that has already run and can never run again. Two databases that both report
-the same `changelog` then hold different schemas, and nothing detects it.
+The standing rule in migration tooling is that a migration must be self-contained, because a later edit
+to a shared helper retroactively changes the meaning of a migration that has already run and can never
+run again. Two databases that both report the same `changelog` then hold different schemas, and nothing
+detects it.
 
 That argument depends on a database existing that cannot be rebuilt. **On this platform none does.**
 There is one environment, `Dev`, plus the throwaway `MONGO_TEST_*` database each suite drops on every
-run. There is no staging and no production; `migrate-mongo-config.js` has no configuration for one.
-The owner can drop and replay both databases from these files at will, and does.
+run. There is no staging and no production; `migrate-mongo-config.js` has no configuration for one. The
+owner can drop and replay both databases from these files at will, and does.
 
 So the rule is replaced rather than broken:
 
 > **A change under `lib/schemas/` is followed by a full rebuild of every database that has run these
-> migrations** — `yarn migrate:down` to empty, `yarn migrate:up` to replay — in the same piece of
-> work, not later. The moment a database exists that cannot be rebuilt, this directory freezes and
-> the old rule comes back.
+> migrations** — `yarn migrate:down` to empty, `yarn migrate:up` to replay — in the same piece of work,
+> not later. The moment a database exists that cannot be rebuilt, this directory freezes and the old
+> rule comes back.
 
-`migrations/` itself keeps the original rule intact: **never edit an applied migration's behaviour**.
-Adding a parameter to a builder here so a *new* migration can express a *new* shape is normal work.
-Changing what an existing call site produces is not — it is the same forbidden edit, one file further
-away.
+Adding a field to a builder is therefore not an edit to history, it is a change to the schema, and it is
+followed by a rebuild in the same commit. What it is **not** is a way to change a live database in
+place: `createCollection` does not run twice, so a `lib/schemas/` edit reaches a database only through a
+replay.
 
 ## Layout
 
 |File|Holds|
 |---|---|
-|`collection.js`|`migrationCreation()` — the `createCollection` + `createIndex` / `drop` pair every `<ts>-create-<coll>.js` is. `setValidator()` — the `collMod` every `<ts>-alter-<coll>.js` is.|
-|`geo.js`|The GeoJSON point (`COORDINATE_TUPLE`, `position()`) and the street-address block (`address()`), shared by the three collections that store an address. `COORDINATE_DECIMAL`, the pre-`20260801000000` node, was **deleted** — see below.|
-|`account.js`|`LOGIN`, `RESET_PWD`, `EMAIL_VERIFY`, `DELETED`, `DISABLED`, `INDEXES_LOGIN_EMAIL` — what `admin`, `shopOwner` and `user` have in common, which is everything about being a thing you log in as. `EMAIL_VERIFY` moved here from `shopOwner.js` when `user` gained the same slot; the shape did not change, so every restatement in `shopOwner.js` still produces what it always produced.|
-|`shopOwner.js`|`validatorShopOwner()`, in each of its three historical shapes.|
-|`user.js`|`validatorUser()`, `addressItem()`, `DEFAULT_ADDRESS_POINTS_INTO_ADDRESSES`. One shape so far. Returns an `$and` pair, always — see below.|
-|`company.js`|`validatorCompany()`, `PUBLIC_FIELDS`, `PUBLISHED_IMPLIES_LINKABLE`. Two shapes: the bare legal record `20260803000000` created, and the shop listing `20260804010000` installed on top of it. Returns an `$and` pair **only** in the second, which is the one thing here that is conditional rather than fixed.|
-|`itemCategory.js`|`validatorItemCategory()`. One shape. The two-level taxonomy — and ⚠️ its depth cap is **not** in it, because "my parent must itself be top-level" reads a different document and no validator can.|
-|`item.js`|`validatorItem()`. One shape, deliberately domain-neutral and deliberately without a `price`.|
+|`collection.js`|`migrationCreation(collection, validator, indexes)` — the whole of every `<ts>-create-<coll>.js`: `createCollection` with the validator and `LEVEL`, then one `createIndex` per entry, and a `down` that drops the collection. The only export.|
+|`encrypted.js`|`encryptedField(description)` → `{ bsonType: 'binData', description }`. All a validator can say about a ciphertext, and the ADR-029 seam: a field routed through this loses every `maxLength`, `minLength` and `pattern` it would otherwise carry, because the server cannot measure a blob.|
+|`geo.js`|`address({ maxLength, positionRequired, encrypted })` — the street-address block, shared by `company`, `shopOwner` and `user`. The GeoJSON node it builds from stays module-internal on purpose: every collection with a point carries the *same* point, and a swapped axis order is the one mistake a reader cannot see in a stored document.|
+|`account.js`|`LOGIN`, `RESET_PWD`, `EMAIL_VERIFY`, `DELETED`, `DISABLED`, `INDEXES_LOGIN_EMAIL` — what `admin`, `shopOwner` and `user` have in common, which is everything about being a thing you log in as. Role on this platform is *which collection you authenticate against* (ADR-002), so the three genuinely share one credential shape.|
+|`admin.js`|`validatorAdmin()`. The platform operator. No `registeredAt`, no `emailVerify`, no `waitApprov` — an operator account is created by another operator, not by a sign-up flow.|
+|`shopOwner.js`|`validatorShopOwner()`. ⚠️ The one collection with personal fields deliberately left in the clear — see below.|
+|`user.js`|`validatorUser()`, `ADDRESS_ITEM`, `DEFAULT_ADDRESS_POINTS_INTO_ADDRESSES`. Returns an `$and` pair, always.|
+|`company.js`|`validatorCompany()`, `PUBLISHED_IMPLIES_LINKABLE`. Returns an `$and` pair, always. The legal record and the storefront in one collection, because a shop **is** a company.|
+|`itemCategory.js`|`validatorItemCategory()`. The two-level taxonomy — and ⚠️ its depth cap is **not** in it, because "my parent must itself be top-level" reads a different document and no validator can.|
+|`item.js`|`validatorItem()`. Domain-neutral, and deliberately without a `price`.|
 
 ## A validator is not always a `$jsonSchema`
 
-`validatorUser()` returns `$and: [ { $jsonSchema: … }, { $expr: … } ]`, and so does `validatorCompany()`
-once `publicFields` is on. That is not a stylistic difference: a MongoDB collection validator is a
-**query expression**, and `$jsonSchema` is only one operator you may use inside it. Anything a query
-can say, a validator can enforce.
+`validatorUser()` and `validatorCompany()` both return `$and: [ { $jsonSchema: … }, { $expr: … } ]`.
+That is not a stylistic difference: a MongoDB collection validator is a **query expression**, and
+`$jsonSchema` is only one operator you may use inside it. Anything a query can say, a validator can
+enforce.
 
-`user` needs that because of `defaultAddress`, a top-level ObjectId naming one element of the
-document's own `addresses` array. "This field must equal the `_id` of a sibling array element" is a
-cross-field rule, and JSON Schema has no way to express one — it validates each subtree against a
-shape, never against another subtree's value. `$expr` does, so the two clauses ride together and the
-pointer cannot dangle.
+`user` needs that because of `defaultAddress`, a top-level ObjectId naming one element of the document's
+own `addresses` array. "This field must equal the `_id` of a sibling array element" is a cross-field
+rule, and JSON Schema has no way to express one — it validates each subtree against a shape, never
+against another subtree's value. `$expr` does, so the two clauses ride together and the pointer cannot
+dangle.
 
-`company` needs it for a different kind of cross-field rule and the same reason: `published: true`
-must imply a `slug` and a `publicName`, or the storefront has a shop with no URL and a card with no
-heading. JSON Schema cannot make one property's *value* change another's requiredness.
+`company` needs it for a different kind of cross-field rule and the same reason: `published: true` must
+imply a `slug` and a `publicName`, or the storefront has a shop with no URL and a card with no heading.
+JSON Schema cannot make one property's *value* change another's requiredness.
 
 The two are worth comparing, because they show the range: one constrains a reference, the other
 constrains a combination. Neither is expressible in the `$jsonSchema` half at any cost, and both are a
@@ -86,62 +77,78 @@ handful of characters in the `$expr` one.
 
 Consequences to know before adding another one:
 
-- **`migrationCreation()` and `setValidator()` needed no change.** Both hand the validator to
-  `createCollection` / `collMod` opaquely and never look inside it. A future `$and` builder works the
-  same way.
-- **A `collMod` on such a collection must restate BOTH clauses.** `collMod` replaces the validator
-  wholesale, as it always has; passing only the `$jsonSchema` half silently drops the `$expr` rule and
-  nothing fails until a dangling pointer is written.
+- **`migrationCreation()` needed no change.** It hands the validator to `createCollection` opaquely and
+  never looks inside it. A future `$and` builder works the same way.
+- **⚠️ Anything that replaces a validator must restate BOTH clauses.** `collMod` replaces a validator
+  wholesale; passing only the `$jsonSchema` half silently drops the `$expr` rule, and nothing fails
+  until a dangling pointer is written. There is no `collMod` in this repository today, which is exactly
+  why this is written down: the first one somebody adds is where it bites.
 - **Reading the schema half out of `listCollections` needs an unwrap.** `test/migrations.test.mjs`
   carries `jsonSchemaOf()` for exactly this; `options.validator.$jsonSchema` is `undefined` on both
-  `user` and `company`. The `company` case is how it gets missed: that collection's assertions were
-  written against a bare `$jsonSchema` and kept working for a day, so the destructure had to be
-  found and replaced when the alter landed rather than being caught by a rule.
+  `user` and `company`, so a destructure reads as `undefined` and every assertion under it passes
+  vacuously.
 - **`$expr` runs on every write to the collection**, not only on the fields it names. Keep it cheap —
-  the `user` one is a `$map` over an array that is at most a handful of elements, and the `company`
-  one is two `$type` checks behind a short-circuiting `$or`.
+  the `user` one is a `$map` over an array that is at most a handful of elements, and the `company` one
+  is two `$type` checks behind a short-circuiting `$or`.
 - **It runs on updates too, not only inserts.** That is the point — it is a constraint rather than a
   create-time check — but it means an update that moves a document *through* an invalid state is
   refused. `companyUpdate` cannot set `published: true` and the slug in two calls, and deleting a
   `user`'s default address has to `$unset` the pointer in the same update.
 
-## How the builders carry history
+## Encryption is a property of whose data it is, not of what the field is
 
-A builder is not "the current schema". It is **every** shape the collection has ever had, selected by
-flag. `validatorShopOwner()` with no arguments is what `20260301000100` created in March;
-`validatorShopOwner({ emailVerify: true, position: true, note: true })` is what the collection looks
-like today. Both have to keep working, because the later shape's `down` is the earlier one.
+`encryptedField()` is applied field by field rather than collection by collection, and the three
+collections that store a street address hand `address()` three different `encrypted` lists. The rule is
+not "an address is personal data":
 
-`company.js` carries a third kind of flag, and it is worth understanding before copying the pattern:
-`publishedRequired` selects a shape **no database ever rests in**. Adding a required field to a
-populated collection takes three steps — widen so the field is legal but not demanded, backfill,
-narrow so it is demanded — because backfilling first is a write under the old
-`additionalProperties: false` validator and narrowing first leaves every stored document valid where it
-sits and unwritable on its next update. The middle shape exists for the length of one migration, in
-both directions (`down` unwinds through it too, since its `$unset` runs under the validator that
-requires the field). It is a flag rather than a state of its own for that reason — and it defaults to
-`publicFields`, so a caller that does not know about the three-step gets the resting shape.
+- **`company.address` is not encrypted at all.** It is the registered seat of a legal entity, published
+  on the shop page, sorted on by `published_city_publicName` and queried by distance through
+  `address.position_2dsphere`. Encrypting it would be encrypting data the platform hands out for free,
+  and paying for it with the map, the city listing and the search.
+- **`user.addresses[]` is encrypted whole**, `city` included, because nothing sorts, searches or
+  paginates customers. Its `_id` and the top-level `defaultAddress` stay clear, and *have to*: the
+  `$expr` clause compares them, and random ciphertext differs on every encryption, so encrypting either
+  side would refuse every write to the collection.
+- **`shopOwner` is the compromise, and the one deliberate hole.** `personalData.firstName`,
+  `personalData.lastName` and `personalData.address.city` stay in the clear because
+  `tbl_active_lastName_firstName`, `tbl_active_firstName` and `tbl_active_city` sort on them and the
+  operator table prefix-searches them with `/^term/i`. **Neither CSFLE algorithm survives that** —
+  random supports no comparison at all, deterministic supports equality and nothing else — so
+  encrypting them would not make the operator table slower, it would make it *wrong*, silently.
+  ADR-029 records the trade and what would have to change to close it.
 
-That is what makes a *deletion* here dangerous in a way an *addition* is not. Dropping a flag branch
-because nothing current uses it breaks the `down` of the migration that introduced it, and nothing
-will notice until someone tries to walk the ladder back.
+⚠️ **`login.email` is the one deterministically encrypted field, on all three login collections.** A
+unique index over random ciphertext constrains nothing, since every insert of one address produces
+different bytes, and no login could find its own account. `emailVerify.newEmailTmp` is deterministic for
+the same reason: koa-utils looks an account up by it.
 
-⚠️ **"Nothing current uses it" and "no migration on disk references it" are different statements, and
-only the second licenses a deletion.** `COORDINATE_DECIMAL` was the worked example: it was the
-pre-`20260801000000` coordinate node, kept under the rule above so
-the migration that created the old shop collection could restate it and the `down` of
-`20260801000000` could restore it. Both of those migrations were deleted on 2026-08-04 with the old
-shop collection, which left the const exported, imported by nothing, and unreachable from every rung
-of the ladder that still exists. `grep -r <name> migrations/` is the check, and it is the whole check: a hit means the shape is
-load-bearing however old it looks, and no hits at all means the history it belonged to went first.
+⚠️ **A field-level rule cannot survive encryption.** `maxLength`, `minLength`, `pattern` and the
+per-axis coordinate bounds all describe a value the server can read. Wherever a field is ciphertext, its
+bound holds in the GraphQL input validation instead — which is why `address()` refuses to attach a
+`maxLength` to an encrypted street, and why passing one anyway would be a rule written down and enforced
+nowhere.
 
-The reason this got noticed rather than sitting there: a dead literal is a **permanent mutation
-survivor**. No test can distinguish `maximum: 180` from `maximum: -180` in a const nothing reads, so
-`yarn test:mutation` reports it every run and it can only ever be cleared by deleting the code. That
-makes the mutation gate the thing that finds orphaned history here, which is worth knowing before
-reaching for a Stryker `disable` comment to quiet one.
+## Two traps in this directory
 
-`test/migrations.test.mjs` walks that whole ladder — full `up`, then one `down` at a time to the
-bottom — so it is the check that a change here did not break a shape further up the history. Run
-`yarn test` before committing anything in this directory, and treat a failure as "the builder no
-longer reproduces a past shape" rather than as a broken test.
+⚠️ **A value passed to a builder and then discarded is a permanent mutation survivor.** `address()`
+builds the clear shape of every member and then throws away the ones named in `encrypted`, so a
+`maxLength` handed in by a caller that encrypts its street reaches no validator at all. No test can
+distinguish `maxLength: 250` from `maxLength: 251` in a shape nothing reads, so `yarn test:mutation`
+reports it every run and it can only ever be cleared by deleting the argument. That makes the mutation
+gate the thing that finds dead literals here, which is worth knowing before reaching for a Stryker
+`disable` comment to quiet one.
+
+⚠️ **A default on an argument every call site passes is a branch nothing can reach.** `positionRequired`
+has no default for that reason, and `indexes` in `collection.js` has none either. `encrypted` keeps its
+`[]` because `company` genuinely passes nothing. The second reason for `positionRequired` is worse than
+untestability: silently false on `company` would make a shop's coordinate optional.
+
+⚠️ **Top-level consts here are evaluated once per process**, so a test that loads a module twice gets the
+first evaluation both times and every mutant inside those consts survives. `test/migrationCalls.test.mjs`
+carries `evictLib()`, which deletes every `lib/` key from `require.cache` before each load, for exactly
+this — without it the directory scored 88% with 54 survivors.
+
+`test/migrations.test.mjs` applies every migration against a real MongoDB and asserts the whole of every
+validator and every index, snapshots included. Run `yarn test` before committing anything in this
+directory, and read the snapshot diff rather than regenerating it — a snapshot updated because the test
+went red launders a schema regression into a committed expectation.

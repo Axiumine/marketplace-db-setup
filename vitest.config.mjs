@@ -1,20 +1,20 @@
 import { defineConfig } from 'vitest/config'
 
-// Three suites, and only one of them is a unit suite in the usual sense.
+// Five suites, and only one of them is an integration suite.
 //
 // test/migrations.test.mjs replays the REAL migrations against a REAL MongoDB (see CLAUDE.md,
 // *Testing*) — that is the main event here and it is what proves a schema, not a mock of one.
-// test/migrationGuards.test.mjs and test/mongoUrl.test.mjs exist because a real server only ever
-// produces the happy answer: the `IndexNotFound` re-throws, the `SEED_DEMO=true` halves of the two
-// seed migrations and every branch of the URL assembly are unreachable from a replay that works.
+// The other four exist because a real server only ever produces the happy answer: the argument
+// checks in lib/schemas/, the four CSFLE guards in lib/encryption.js, the `SEED_DEMO`-off half of
+// the seed and every branch of the URL assembly are unreachable from a replay that works.
 //
 // fileParallelism: false — mirrors the services' integration project. The migration suite mutates
 // one shared database end to end (drops it, replays every migration, reverts every migration), so
 // a second file running concurrently would race the same collections.
 //
 // ⚠️ There is NO pool setting here, and the coverage flake that looked like one was not one.
-// Three suites load the same CommonJS files (migrate-mongo requires a migration, migrationGuards
-// requires it again to drive its failure path; migrate-mongo-config and mongoUrl.test both pull in
+// Several suites load the same CommonJS files (migrate-mongo requires a migration, migrationCalls
+// requires it again to record its driver calls; migrate-mongo-config and mongoUrl.test both pull in
 // lib/mongoUrl.js), and `yarn test:cov` alternated between 100% and 99.48% — lib/mongoUrl.js at
 // 90.9% statements / 50% branches, lines 13-28 (both function bodies) uncovered, about one run in
 // six. The real cause is one line in test/migrations.test.mjs: it took `buildMongoUrl` through an

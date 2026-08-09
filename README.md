@@ -8,9 +8,13 @@ migrations that create collections, attach `$jsonSchema` validators, build index
 demo dataset. Everything that reads or writes those collections lives in the nine backend services and
 the three frontends beside this repo.
 
-Migrations run under [migrate-mongo](https://github.com/seppevs/migrate-mongo). They replaced a
-hand-rolled runner that tracked a per-collection revision integer in a `revApp` collection; that system
-is gone.
+Migrations run under [migrate-mongo](https://github.com/seppevs/migrate-mongo).
+
+**Seven migrations, six of which create a collection and one of which seeds demo data.** Each collection
+is declared once, in its final shape — validator, `additionalProperties: false`, encryption and every
+index in the same call. There is no `collMod` in this repository and no `<ts>-alter-<coll>.js`: a schema
+that is right the first time has nothing to widen, backfill or narrow, and a reader of `migrations/` sees
+the shape the database actually has rather than the sum of a ladder.
 
 - **Rules for changing anything here** — `CLAUDE.md`
 - **Prerequisites, test suites, gates, hook mechanics** — `REPO.md`
@@ -53,18 +57,13 @@ collection, and no shop collection.
 storefront renders about a shop hangs off `company`, which is what `publicName`, `slug`, `description` and
 `published` are doing on a collection whose other fields describe a legal entity to a registrar.
 
-On 2026-08-04 sixteen collections were dropped outright: 13 product-type collections, a delivery-costs
-collection, the shop collection and its per-shop taxonomy collection. Their `create-*` migrations were
-deleted, the alters that touched them were deleted, their schema builders were deleted, and both seed
-migrations were stripped of every insert into them. What survived was the tenant skeleton — an operator, a
-shop owner, and the company that shop owner registered — plus `user`, added just before.
-
-`item` and `itemCategory` are the replacement, and they are **not those collections renamed**. The 13
-product types differed from one another in their *category*, not in their shape, so encoding the category
-as a collection name is what made adding a fourteenth a migration instead of a document. The replacement is
-one domain-neutral collection plus a taxonomy. `itemCategory` is not the old per-shop taxonomy under an
-English name either: it is platform-wide, written only by an operator, two levels deep, and has no owner
-column at all.
+**The catalogue is one collection plus a taxonomy, and it is domain-neutral by design** (ADR-008). A
+product type is an `itemCategory` *document*, never a collection: types differ from one another in their
+*category*, not in their shape, so encoding a category as a collection name is what would make adding the
+next one a migration instead of a document. A new collection needs a shape `item` genuinely cannot hold.
+`itemCategory` is platform-wide rather than per shop — two shops selling the same kind of thing have to
+land in the same category or the customer-facing filter means nothing — which is why writes are Admin-only
+and there is no owner column on it.
 
 Nothing here presumes what is sold, and that is a design constraint rather than an accident of the current
 data.
@@ -79,55 +78,47 @@ indexes and the `en-GB` locale the frontends format with are market choices rath
 
 ## Demo seed
 
-Two files, both **gated on `SEED_DEMO=true`** and a no-op otherwise, so both are safe to apply in every
-environment. Both use fixed `_id` literals, so each `down` deletes exactly what its `up` wrote.
+One file, `20260301000600-seed-demo.js`, **gated on `SEED_DEMO=true`** and a no-op otherwise, so it is safe
+to apply in every environment. It writes one `admin`, one `shopOwner` and one `company` — the tenant
+skeleton: an operator, a shop owner, and the company that shop owner registered. Fixed `_id` literals, so
+`down` deletes exactly what `up` wrote, in the reverse order.
 
-| File | Inserts |
-|---|---|
-| `20260301001800-seed-demo.js` | one `admin`, one `shopOwner` |
-| `20260803142526-seed-demo-company.js` | one `company` |
+The three inserts are one file rather than three because they are one fact: the company points its
+`idShopOwner` at the seeded shop owner, and nothing enforces that reference. Splitting them across
+migrations would make a dangling pointer representable the moment somebody replayed with the flag off and
+then turned it on.
 
-The two are not independent. `20260803142526` points its `company.idShopOwner` at the March seed's
-shopOwner and does **not** insert one if it is missing — the shared flag plus the file order means either
-both ran or neither did. It dangles only if someone replays with the flag off and then turns it on, which
-no supported flow does.
+⚠️ **The seed is the only migration that needs the CSFLE master key.** Every personal field on these three
+collections is `bsonType: 'binData'` in the validator that created them, so a plaintext `insertOne` is a
+rejected write: the seed encrypts field by field first, through `lib/encryption.js`, and refuses to start
+if `CSFLE_KEY_VAULT_NAMESPACE` or `CSFLE_MASTER_KEY_PATH` is unset. `down` needs neither — deleting by
+`_id` does not read a value.
 
-Both files used to write more: the March seed also inserted a shop document with the company embedded
-inside it, and the August seed inserted a shop and two taxonomy documents. Those collections are gone and
-every insert into them went with them. The second file still exists rather than being folded into the first
-because migrations are immutable in *ordering* even when their content was rewritten — `company` does not
-exist until `20260803000000`, so its seed cannot run in March.
+The demo company is **Northwind Trading Ltd**, seeded `published: false`: it carries no `slug` and no
+`publicName`, and the validator's `$expr` half refuses to let a company go live without them.
 
-The demo company is **Northwind Trading Ltd**, carried over field for field from the embedded object the
-March seed wrote, so a database seeded before the extraction and one seeded after it describe the same
-company. Two fields are new, because `company` has them and the sub-document did not: `taxCode` and
-`address`, the registered seat.
+## Three things about this schema that look like mistakes
 
-## Fixes applied during the migrate-mongo port
+- **`address.city` is bounded with `maxLength`, never `maximum`.** `maximum` is a no-op on a string, so a
+  validator that uses it enforces no length limit at all while reading exactly as if it does.
+- **Every array item schema states `bsonType: 'object'`.** Omitting it leaves the element unconstrained,
+  and `additionalProperties: false` inside it then constrains nothing.
+- **The GeoJSON pair is `[lng, lat]` and typed `['double', 'int', 'long']`.** Both orders are well-formed,
+  so no validator can catch a transposed point — it simply puts the shop in the wrong hemisphere, and the
+  suite asserts the axis order with a real `$near` query instead. `decimal` is worse than cosmetic: the
+  models declare `coordinates: { type: [Number] }`, which can never produce one, and after a `.lean()`
+  read `GraphQLFloat.serialize(Decimal128)` throws. `int` in the list is not redundant — `bson` encodes an
+  integer-valued JS Number as int32, so a point at longitude exactly 9 is stored `9`.
 
-These deviate intentionally from the original mongosh scripts; fidelity of everything else was
-diff-verified field by field.
+## Environments
 
-- `address.city`: `maximum: 100` → `maxLength: 100`. `maximum` is a no-op on strings, so the original
-  enforced no length limit at all; the port enforces 100.
-- Array item schemas gained `bsonType: "object"` where the original omitted it. App writes always insert
-  objects there, so no valid data is rejected.
-- The GeoJSON coordinate order and the coordinate type. The original stored `[lat, lng]` and typed the
-  values `decimal`. Preserving the original order was defensible only while nothing interpreted the pair;
-  the moment a geo index exists, `[lat, lng]` is not a quirk but a shop in the wrong hemisphere. The
-  `decimal` type is worse than cosmetic: the models declare `coordinates: { type: [Number] }`, which can
-  never produce it, and the resolver answered 500 on every call.
+Only a `Dev` environment is wired up (`MONGO_DEV_*`), plus a throwaway test database. There is no staging
+or production configuration yet.
 
-## History
-
-The dev database `dbMarketplaceDev` only became migrate-mongo-managed on 2026-08-01. Until then it was
-still what the retired hand-rolled runner had built: no `changelog` at all, four collections no migration
-creates (`revApp` with 19 revision documents, plus `user`, `loginsubdocs` and `resetpwdsubdocs`), and a
-`migrate:status` that reported every file as pending. It was dropped and rebuilt from the migrations with
-`SEED_DEMO=true`. The only thing not reproduced was `login.firstLogin` / `login.lastLogin` on the demo
-admin, which the application rewrites on the next login.
-
-Only a `Dev` environment is wired up. There is no staging or production configuration yet.
+⚠️ **Both are replayable from these files, and that is what licenses `lib/schemas/`.** A change to a
+builder there changes what an already-applied migration means, which is safe only for as long as every
+database that has run these migrations can be dropped and rebuilt in the same piece of work. The moment an
+unrebuildable database exists, that directory freezes.
 
 ## Licence and publication
 
