@@ -46,8 +46,12 @@ raiseLicenseProblems: true
 # migrations plus the mongodb driver, not application code (see package.json
 # dependencies). A dependencyOverrides entry pinned to a package that isn't installed
 # would just be dead configuration.
+# ⚠️ Two keys, not one. This project declares GPL-3.0-or-later in package.json since the LICENSE
+# file landed, and Qodana derives the project key from that field — a rule keyed only on
+# PROPRIETARY-LICENSE now matches nothing, and a rule that matches no project does not fail: it
+# silently does nothing while the audit still reports green. `allowed` below is unchanged.
 licenseRules:
-  - keys: ["PROPRIETARY-LICENSE"]
+  - keys: ["GPL-3.0-or-later", "PROPRIETARY-LICENSE"]
     allowed:
       [
         "PROPRIETARY-LICENSE",
