@@ -4,7 +4,7 @@ MongoDB schema migrations for **Marketplace**. No application code — only migr
 collections, attach `$jsonSchema` validators, build indexes and optionally seed demo data. Managed by
 [migrate-mongo](https://github.com/seppevs/migrate-mongo).
 
-**Read parent first** — `/media/nvme/websites/fullstack-marketplace-blueprint/CLAUDE.md`
+**Read parent first** — `../../CLAUDE.md`
 (<https://github.com/Axiumine/fullstack-marketplace-blueprint> if you are reading this on GitHub).
 One of fifteen sub-repos.
 
