@@ -12,8 +12,8 @@ resolver, a GraphQL field and three frontends, and nothing maps between those la
 
 ⚠️ **Nothing here may presume what is sold** (ADR-008). `item.js` is one domain-neutral collection and
 `itemCategory.js` is the taxonomy that gives it meaning; a new product type is an `itemCategory`
-*document*. Do not add a per-type builder — thirteen validators restating one base shape and differing
-only in their category is exactly the duplication this directory exists to prevent.
+*document*. Do not add a per-type builder — one validator per product type, each restating the same base
+shape and differing only in its category, is exactly the duplication this directory exists to prevent.
 
 ## Why sharing a shape is allowed here, when it usually is not
 

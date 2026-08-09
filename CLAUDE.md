@@ -33,7 +33,7 @@ admin, user — outside the chain
 
 ⚠️ **Nothing here may presume what is sold.** The extension seam is the taxonomy: a new product type is
 an `itemCategory` **document**, not a migration. A new *collection* needs a shape `item` genuinely cannot
-hold — the 13 never cleared that bar, since they differed in their category and not in their shape.
+hold — a product type that differs in its category and not in its shape does not clear that bar.
 
 ⚠️ **Every name is English** — collections, fields, `lib/schemas/` builders and their flags, migration
 filenames, the `description` strings inside validators, test identifiers, comments and the demo seed's
