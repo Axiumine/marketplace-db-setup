@@ -4,15 +4,14 @@ MongoDB schema migrations for **Marketplace**. No application code — only migr
 collections, attach `$jsonSchema` validators, build indexes and optionally seed demo data. Managed by
 [migrate-mongo](https://github.com/seppevs/migrate-mongo).
 
-**Read parent first** — `../../CLAUDE.md`
-(<https://github.com/Axiumine/fullstack-marketplace-blueprint> if you are reading this on GitHub).
+**Read parent first** — [`../../CLAUDE.md`](https://github.com/Axiumine/fullstack-marketplace-blueprint/blob/main/CLAUDE.md)
 One of fifteen sub-repos.
 
 | Need | File |
 |---|---|
-| scope, the six collections, the demo seed, the three schema traps | `README.md` |
-| prerequisites, the five test suites, gates, hooks, migrate-mongo state | `REPO.md` |
-| why a validator shape is the way it is | `lib/schemas/README.md` |
+| scope, the six collections, the demo seed, the three schema traps | [`README.md`](./README.md) |
+| prerequisites, the five test suites, gates, hooks, migrate-mongo state | [`REPO.md`](./REPO.md) |
+| why a validator shape is the way it is | [`lib/schemas/README.md`](./lib/schemas/README.md) |
 | anything cross-repo | parent `CLAUDE.md` |
 
 **Seven migrations, six of which create a collection and one of which seeds demo data.** Each collection
@@ -49,10 +48,10 @@ data. Adding one word of a second language is a regression, not a style nit.
 | `migrations/20260301000600-seed-demo.js` | Optional demo seed, **one** file — one `admin`, one `shopOwner`, one `company`. No-op unless `SEED_DEMO=true`. |
 | `lib/encryption.js` | The CSFLE half (ADR-029): opens a `ClientEncryption` against the master key at `CSFLE_MASTER_KEY_PATH`, mints or reuses one data key per collection in `<db>.__keyVault`, and encrypts a document field by field so the seed can write into collections whose personal fields are `binData` from the moment they are created. |
 | `lib/mongoUrl.js` | The `://user:pwd@` + `authSource` assembly, shared by the config (`MONGO_DEV_*`) and the tests (`MONGO_TEST_*`) so the two cannot drift. |
-| `test/` | Five vitest suites — the migration replay plus four unit suites. Layout and traps: `REPO.md`. |
+| `test/` | Five vitest suites — the migration replay plus four unit suites. Layout and traps: [`REPO.md`](./REPO.md). |
 | `vitest.config.mjs` · `vitest.mutation.config.mjs` · `stryker.config.mjs` | Suite configs. Coverage gated at 100% on every metric; Stryker `thresholds.break: 100`, `concurrency: 1` (one real database). |
 | `qodana.yaml` / `qodana.sh` | Scan config and runner. Critical 0 / high 0, coverage 100 total / 100 fresh, SCA and license checks. |
-| `.githooks/pre-commit` · `pre-push` | Gates. What runs when, and why: `REPO.md`. |
+| `.githooks/pre-commit` · `pre-push` | Gates. What runs when, and why: [`REPO.md`](./REPO.md). |
 | `env` | Committed template for `.env`. `.env` itself is gitignored — dev Mongo credentials. |
 | `setup/mongodb.js` · `setup/redis.txt` | Manual one-off runbooks (DB users, dump/restore, Redis ACL). **Gitignored** — they hold real users, passwords and internal hostnames. A clone does not get them; ask whoever runs the cluster. |
 
@@ -101,7 +100,7 @@ reads as undefined and the first call dies with `TypeError: mm.config.set is not
   means. That argument depends on a database existing that cannot be rebuilt, and **none does here**: one
   `Dev` environment plus a throwaway test database, both replayable from these files. So the rule is
   replaced rather than broken — **a change under `lib/schemas/` is followed by a full rebuild of every
-  database that has run these migrations, in the same piece of work.** Read `lib/schemas/README.md`.
+  database that has run these migrations, in the same piece of work.** Read [`lib/schemas/README.md`](./lib/schemas/README.md).
 - **A helper cannot live in `migrations/`.** migrate-mongo treats every `*.js` under `migrationsDir` as a
   migration, and `test/migrations.test.mjs` reads the directory the same way. Helpers go in `lib/`, in
   CommonJS like everything else.
@@ -337,7 +336,7 @@ commit skips the last two. ⚠️ **A reachable MongoDB is therefore a prerequis
 for pushing. **Never lower a threshold and never remove a gate** — a migration whose branch is uncovered
 gets a test, and `test/migrationCalls.test.mjs` is the file to copy: it drives a migration against a fake
 db with no server anywhere, which is how the branches a real replay cannot reach get covered. Mechanics,
-bypasses and the Qodana exclusions: `REPO.md`.
+bypasses and the Qodana exclusions: [`REPO.md`](./REPO.md).
 
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence

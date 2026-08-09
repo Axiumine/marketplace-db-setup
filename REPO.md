@@ -1,8 +1,8 @@
 # Repository mechanics
 
 How this repo's prerequisites, test suites, gates and git plumbing behave, and why. Nothing here changes
-what you write in a migration — it explains what happens when you run, commit or push one. `CLAUDE.md`
-carries the rules; `README.md` is the human-facing document.
+what you write in a migration — it explains what happens when you run, commit or push one. [`CLAUDE.md`](./CLAUDE.md)
+carries the rules; [`README.md`](./README.md) is the human-facing document.
 
 ## Prerequisites
 
@@ -284,7 +284,7 @@ it back**: a new `DuplicatedCode` finding over `migrations/` means a shape that 
 
 `setup/mongodb.js` is a symptom fix; the cause is the extension, and the next JS inspection added to the
 profile will need a sixth entry. Renaming to `setup/mongodb.txt` removes the class outright and is the
-better fix once the references in this file, in the parent workspace's `CLAUDE.md` and in the `-name '*.js'`
+better fix once the references in this file, in the parent workspace's [`CLAUDE.md`](./CLAUDE.md) and in the `-name '*.js'`
 glob of `package.json`'s semgrep script can move with it.
 
 ### The bar for extracting a shape
@@ -295,7 +295,7 @@ including JSON key order**. Key order is not cosmetic: MongoDB stores a validato
 handed, `listCollections` reads it back in that order, and both frozen-shape tests in
 `test/migrations.test.mjs` compare it as text. A shape that "looks the same" is not evidence — diff it.
 
-The rule that licenses the directory at all is in `lib/schemas/README.md`: a change under it is followed by
+The rule that licenses the directory at all is in [`lib/schemas/README.md`](./lib/schemas/README.md): a change under it is followed by
 a full rebuild of every database that has run these migrations, in the same piece of work. What makes the
 extraction safe here is that a create migration produces its collection in one call, so there is exactly one
 state per collection to compare, in one direction.

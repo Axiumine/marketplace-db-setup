@@ -16,9 +16,9 @@ index in the same call. There is no `collMod` in this repository and no `<ts>-al
 that is right the first time has nothing to widen, backfill or narrow, and a reader of `migrations/` sees
 the shape the database actually has rather than the sum of a ladder.
 
-- **Rules for changing anything here** — `CLAUDE.md`
-- **Prerequisites, test suites, gates, hook mechanics** — `REPO.md`
-- **Why a particular validator shape exists** — `lib/schemas/README.md`
+- **Rules for changing anything here** — [`CLAUDE.md`](./CLAUDE.md)
+- **Prerequisites, test suites, gates, hook mechanics** — [`REPO.md`](./REPO.md)
+- **Why a particular validator shape exists** — [`lib/schemas/README.md`](./lib/schemas/README.md)
 
 ## The six collections
 
