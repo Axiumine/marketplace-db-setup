@@ -131,6 +131,7 @@ Only a `Dev` environment is wired up. There is no staging or production configur
 
 ## Licence and publication
 
+GPL-3.0-or-later — the full text is in [LICENSE](./LICENSE), and `package.json` declares the same SPDX id.
 The remote is `https://github.com/Axiumine/marketplace-db-setup` and it is public. The history is a single
 commit by design: two operational runbooks under `setup/` used to be tracked and carried live credentials,
 so they were untracked and the commits holding earlier copies were collapsed into one. Those files are
