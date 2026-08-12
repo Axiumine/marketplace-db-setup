@@ -48,7 +48,9 @@ data. Adding one word of a second language is a regression, not a style nit.
 | `migrations/20260301000600-seed-demo.js` | Optional demo seed, **one** file — one `admin`, one `shopOwner`, one `company`. No-op unless `SEED_DEMO=true`. |
 | `lib/encryption.js` | The CSFLE half (ADR-029): opens a `ClientEncryption` against the master key at `CSFLE_MASTER_KEY_PATH`, mints or reuses one data key per collection in `<db>.__keyVault`, and encrypts a document field by field so the seed can write into collections whose personal fields are `binData` from the moment they are created. |
 | `lib/mongoUrl.js` | The `://user:pwd@` + `authSource` assembly, shared by the config (`MONGO_DEV_*`) and the tests (`MONGO_TEST_*`) so the two cannot drift. |
-| `test/` | Five vitest suites — the migration replay plus four unit suites. Layout and traps: [`REPO.md`](./REPO.md). |
+| `lib/keygrip.js` | The ADR-034 one, and the only file here that has nothing to do with MongoDB: it mints or adopts the cookie-signing key array and seals it under `KEYGRIP_KEK`. ⚠️ **A deliberate duplicate of `marketplace-common/src/encryption/wrapKeygripKeys.mts`** — five services in another repo unwrap what it writes, no test spans the two, and a drift in the format shows up as a fleet that stops booting. Its header says what may not change alone. |
+| `scripts/seedKeygrip.js` | `yarn seed:keygrip` — the operator entry point for the above: connection, the `--force` flag, and what is printed (version and fingerprint, never a key). ⚠️ **Never wire it into a service's boot.** |
+| `test/` | Six vitest suites — the migration replay plus five unit suites. Layout and traps: [`REPO.md`](./REPO.md). |
 | `vitest.config.mjs` · `vitest.mutation.config.mjs` · `stryker.config.mjs` | Suite configs. Coverage gated at 100% on every metric; Stryker `thresholds.break: 100`, `concurrency: 1` (one real database). |
 | `qodana.yaml` / `qodana.sh` | Scan config and runner. Critical 0 / high 0, coverage 100 total / 100 fresh, SCA and license checks. |
 | `.githooks/pre-commit` · `pre-push` | Gates. What runs when, and why: [`REPO.md`](./REPO.md). |
@@ -74,6 +76,24 @@ file it does not recognise reads as PENDING, and `migrate:up` then dies on the f
 `Collection already exists`. Drop it and replay — `yarn migrate:up` with `SEED_DEMO=true` for a dev
 box. The one thing a replay does not reproduce is `login.firstLogin` / `login.lastLogin` on the demo
 admin, which the app rewrites on the next login.
+
+## Seeding the cookie-signing keys
+
+```sh
+yarn seed:keygrip            # once per machine, BEFORE any service starts
+yarn seed:keygrip --force    # mint a new key set, invalidating every live session
+```
+
+Writes one Redis hash, `<REDIS_KEY>keygrip`, holding the Keygrip key array sealed with AES-256-GCM under
+`KEYGRIP_KEK` (ADR-034). The five cookie-signing services — the four `*-authorization` ones and
+`marketplace-dev-authenticated-logout` — read it at boot and **exit 1** if it is missing
+(`KEYGRIP_RECORD_MISSING`) or if their KEK cannot open it (`KEYGRIP_KEK_MISMATCH`).
+
+⚠️ **It is idempotent without `--force` and destructive with it.** A second plain run leaves an existing
+record untouched and reports it; `--force` replaces the keys, so every cookie signed under the old set
+stops verifying and every user signs in again. Upgrading a machine that still has `KEYGRIP_KEY_1` /
+`KEYGRIP_KEY_2` in this repo's `.env` is the one case where the plain run adopts rather than mints —
+delete both from the `.env` afterwards, they are read once and never again.
 
 ## Module system
 
@@ -318,6 +338,10 @@ mongoose getters never run and the raw driver value reaches GraphQL, where
   is **not** safe to paste into an issue, a PR or a public repo. Both runbooks are gitignored for that
   reason; re-adding either undoes the exercise. Substitute from `.env` when running the placeholdered
   parts by hand.
+- ⚠️ **`KEYGRIP_KEK` is the highest-value value in this repo's `.env`** (ADR-034). It is not a database
+  credential — it unwraps the cookie-signing keys of all five signing services at once, so one leak forges
+  a session of any tier. The `pre-commit` guard matches it on its exact shape (base64 of 32 bytes: 43
+  characters and one `=`), which no template placeholder has. Print its name, never its value.
 - Only a `Dev` environment is wired up (`MONGO_DEV_*`). There is no staging or prod config yet.
 
 ## Version control
