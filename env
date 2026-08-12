@@ -28,6 +28,48 @@ CSFLE_MASTER_KEY_PATH=
 # database in each service's .env — the test blocks below get their own throwaway database's name.
 CSFLE_KEY_VAULT_NAMESPACE=
 
+# K E Y G R I P   S E E D   (ADR-034)
+#
+# Read by `yarn seed:keygrip` and by nothing else here — no migration touches Redis. The script mints
+# the cookie-signing key set the five services that sign or read a session cookie refuse to boot
+# without, so it runs ONCE per machine, before any service starts (SETUP.md lists it there).
+#
+# ⚠️ Every value in this block must be the SAME one the five services carry. The keys live at
+# `<REDIS_KEY>keygrip`, so a seed run against a different REDIS_KEY writes a record nobody reads and
+# the fleet still refuses to start; a different KEYGRIP_KEK writes one they cannot open, which is the
+# louder half of the same mistake — they name it KEYGRIP_KEK_MISMATCH and exit 1.
+REDIS_IS_CLUSTER=1
+#
+# Read ONLY when REDIS_IS_CLUSTER is not exactly the string '1' — the same switch koa-utils makes, so
+# the record lands on the node the services look for it on. An empty value is not an error on that
+# branch: node-redis falls back to redis://localhost:6379 and seeds the wrong server rather than
+# refusing. Set it before flipping the flag.
+REDIS_URL=
+REDIS_DB1_HOST=db1
+REDIS_DB2_HOST=db2
+REDIS_DB3_HOST=db3
+REDIS_DB1_PORT=6379
+REDIS_DB2_PORT=6379
+REDIS_DB3_PORT=6379
+REDIS_USERNAME=
+REDIS_PASSWORD=
+REDIS_KEY=marketplaceDev:
+#
+# ⚠️ The key that the signing keys are sealed under, not a signing key itself. Base64 of exactly 32
+# bytes — `openssl rand -base64 32` — and the seed refuses anything else rather than padding it.
+# Losing it does NOT lose the platform: re-seed with --force and everyone signs in again.
+KEYGRIP_KEK=
+#
+# Optional, and only on a machine that ran the pre-ADR-034 arrangement. If KEYGRIP_KEY_1 is present
+# the seed ADOPTS it as the first key rather than minting a fresh one, so every session cookie
+# already signed with it stays valid and nobody is logged out by the move. KEYGRIP_KEY_2 comes along
+# as the second key when it is there; alone it is ignored, because it was never the signer.
+# ⚠️ Copy the values from a service's .env, run the seed once, then delete them from both — they are
+# read by nothing after that, and a signing key sitting in an environment file is what ADR-034 exists
+# to remove. A fresh machine leaves both empty.
+KEYGRIP_KEY_1=
+KEYGRIP_KEY_2=
+
 # Qodana Cloud token (see qodana.sh). Never commit a real value here — this file is the
 # committed placeholder template; the real token lives only in the gitignored .env.
 QODANA_TOKEN=

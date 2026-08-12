@@ -6,11 +6,13 @@ carries the rules; [`README.md`](./README.md) is the human-facing document.
 
 ## Prerequisites
 
-1. `yarn install` (pulls `migrate-mongo`, `mongodb`, `dotenv`).
+1. `yarn install` (pulls `migrate-mongo`, `mongodb`, `dotenv`, and — for the keygrip seed alone — `redis`).
 2. Populate `.env` from the committed `env` template. Required: `MONGO_DEV_UDBOWNER`, `MONGO_DEV_PWD`,
    `MONGO_DEV_AUTH_ADMIN`, `MONGO_DEV_DB`, `MONGO_DEV_CONN_STRING`. Optional: `SEED_DEMO`. To run the
    suites, also `MONGO_TEST_CONN_STRING`, `MONGO_TEST_UDBOWNER`, `MONGO_TEST_PWDDBOWNER`,
-   `MONGO_TEST_AUTH_ADMIN`, `MONGO_TEST_DB`.
+   `MONGO_TEST_AUTH_ADMIN`, `MONGO_TEST_DB`. `yarn seed:keygrip` needs none of those and a different set
+   instead — the `REDIS_*` block, `REDIS_KEY`, and `KEYGRIP_KEK`; the suite that covers it stubs all of
+   them, so a `.env` with no Redis at all still runs the tests.
 3. The DB user must already exist — create it with the snippets in `setup/mongodb.js`. That applies to the
    test user too: it needs `dbOwner` on the test DB, because the suite drops it.
 
@@ -73,7 +75,7 @@ of those databases; `setup/mongodb.js` carries the loop that creates them. Dropp
 remove them — MongoDB keeps every user document in `admin.system.users` whatever its authentication
 database is.
 
-**Five suites, 70 tests.** `yarn test` and `yarn test:seed` both report **70 passed**, nothing skipped, and
+**Six suites, 86 tests.** `yarn test` and `yarn test:seed` both report **86 passed**, nothing skipped, and
 both exit 0. Nothing here stands down when `SEED_DEMO` is off: the seed-count test asserts zero instead of
 one, and the test that drives the seeded `up` pops the seed migration and forces the flag on for the
 length of one test, so the encryption path is exercised either way. ⚠️ Those numbers date from the last
@@ -150,7 +152,7 @@ and every `accepts('company', …)` in the file starts failing for a reason unre
 their tests differ from the minimum by one field; `validItem` mints its two references rather than
 resolving them, since nothing checks them.
 
-## The four unit suites, and the 100% gates
+## The five unit suites, and the 100% gates
 
 The replay was the only suite here for most of the repo's life, and both this project and
 `vitest.config.mjs` argued coverage should not be gated: a statement gate over migration files would mostly
@@ -163,6 +165,7 @@ answer**. It stopped being fair the moment the unit suites landed.
 | `test/mongoUrl.test.mjs` | every branch of `lib/mongoUrl.js`: credentials after the scheme, only the first `://` replaced, percent-encoding, `&authSource=` when a query already exists, no query parameter at all for `undefined` / `''` / `null`, and a missing piece reported under the caller's own variable name. |
 | `test/migrateMongoConfig.test.mjs` | `migrate-mongo-config.js` under stubbed **fake** `MONGO_DEV_*`, asserting the whole exported object with one `deepEqual` — a misspelled key there is not an error, it is a migrate-mongo default silently taking over. |
 | `test/migrationCalls.test.mjs` | the backstop: every migration's `up` and `down` against a recording fake `db`, with the ordered driver-call log frozen as a snapshot. It is also the only suite that drives the seed with `SEED_DEMO` **off**, where both directions are no-ops and a real database can therefore prove nothing. |
+| `test/keygrip.test.mjs` | `lib/keygrip.js`, the ADR-034 seed helper — and the only suite here that touches neither MongoDB nor migrations. It drives the mint / adopt / leave-alone decision against a fake hash store, and it **unwraps with plain `node:crypto` rather than with the module's own helper**: the readers are five services in another repo, so a test that used the writer to check the writer would pass through any change of format. Fingerprints are asserted to move with the key **ids** and not with the material, and the version is asserted to be the AAD — swapping it must make the unwrap throw. |
 | `test/encryption.test.mjs` | the four guards in `lib/encryption.js` that a correct environment never trips: `CSFLE_KEY_VAULT_NAMESPACE` unset, set to `''`, `CSFLE_MASTER_KEY_PATH` unset, and a master key that is not exactly 96 bytes. `migrations.test.mjs` drives the conversion itself against a real MongoDB; only these drive the file *refusing to run*. Each passes `null` as the client, which is the proof that all four fire before the connection is touched — one moving below the `ClientEncryption` construction turns the asserted message into a `TypeError`. |
 
 `migrateMongoConfig` had no test of any kind and the coverage gate did not notice: v8 only reports files
@@ -208,7 +211,7 @@ therefore `delete`s the file from `require.cache` before requiring it, in the on
 seeded `up` by hand. The rule generalises: **a test that means to cover module-level code has to be the
 thing that loads the module.**
 
-⚠️ **Load a CommonJS file the same way every other caller in the process loads it.** All four unit suites use
+⚠️ **Load a CommonJS file the same way every other caller in the process loads it.** All five unit suites use
 `createRequire(import.meta.url)`, not `import`, and so does `migrations.test.mjs` for `buildMongoUrl`.
 migrate-mongo requires a migration through node's own loader; an `import()` of the same path goes through
 vite, and v8 then holds **two scripts for one path with different byte offsets**. Merging coverage reports

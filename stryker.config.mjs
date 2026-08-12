@@ -56,6 +56,18 @@ export default {
 		 * of documentation no test can execute. ⚠️ It also contains real credentials in an unquoted
 		 * `-password` flag; keeping it out of the sandbox keeps them out of one more place.
 		 */
-		'!setup/**'
+		'!setup/**',
+		/*
+		 * scripts/seedKeygrip.js is the operator entry point for ADR-034, and it is out of scope the
+		 * same way an `index.mts` is in the services: everything it decides lives in lib/keygrip.js,
+		 * which IS mutated and is unit-tested against a fake hash. What is left here is a Redis
+		 * connection, one argv flag and four console lines — killing a mutant in any of them would
+		 * take a test that connects to a real Redis to assert on wording.
+		 *
+		 * Neither positive pattern above reaches scripts/, so this is a statement of intent rather
+		 * than a filter that removes anything today. It stops the next file added under scripts/
+		 * from silently being outside the gate for a reason nobody wrote down.
+		 */
+		'!scripts/**'
 	]
 }
