@@ -252,10 +252,17 @@ cannot represent a second default, so setting one is a single atomic `$set` with
 stated so it is not a surprise: "is this the default?" is a comparison against a sibling field rather than
 a local boolean read.
 
-Four divergences from `shopOwner`, all argued at the head of `lib/schemas/user.js`: `personalData` is
-**optional** (registration is an email and a password and nothing else), `addresses` is an **array** where
-the shop owner has one, `defaultAddress` has no counterpart, and there is **no `waitApprov`** — a customer
-self-serves, so the only gate between registering and logging in is the email confirmation.
+Three divergences from `shopOwner`, all argued at the head of `lib/schemas/user.js`: `addresses` is an
+**array** where the shop owner has one, `defaultAddress` has no counterpart, and there is **no
+`waitApprov`** — a customer self-serves, so the only gate between registering and logging in is the email
+confirmation. A shop owner who self-serves through `shopOwnerRegister` gets both gates; one an Admin
+created gets neither.
+
+⚠️ **`personalData` was a fourth divergence until 2026-08-12** and is not one now: it left `shopOwner`'s
+required list when `shopOwnerRegister` was built, so both collections take an email and a password at
+sign-up and collect the rest later. `shopOwnerAdd` still demands the whole block — an operator filling a
+form in has the details in front of them — which is a rule of that mutation, not of the collection.
+
 `personalData.contacts` requires none of its members, unlike `shopOwner`'s: `login.email` is already the
 credential, so demanding a contact email would ask for the same address twice.
 

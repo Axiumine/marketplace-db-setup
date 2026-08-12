@@ -719,7 +719,6 @@ exports[`the full validator of every collection is frozen > shopOwner validator 
     "title": "shopOwner",
     "required": [
       "login",
-      "personalData",
       "registeredAt"
     ],
     "properties": {
@@ -868,7 +867,7 @@ exports[`the full validator of every collection is frozen > shopOwner validator 
       },
       "waitApprov": {
         "bsonType": "bool",
-        "description": "present and true: awaiting admin approval (flagged by telepromoter) or deleted"
+        "description": "present and true: may not log in until an admin approves this account"
       },
       "notes": {
         "bsonType": "binData",

@@ -167,7 +167,6 @@ exports[`20260301000100-create-shopOwner.js — up() and down() issue exactly th
             "title": "shopOwner",
             "required": [
               "login",
-              "personalData",
               "registeredAt"
             ],
             "properties": {
@@ -316,7 +315,7 @@ exports[`20260301000100-create-shopOwner.js — up() and down() issue exactly th
               },
               "waitApprov": {
                 "bsonType": "bool",
-                "description": "present and true: awaiting admin approval (flagged by telepromoter) or deleted"
+                "description": "present and true: may not log in until an admin approves this account"
               },
               "notes": {
                 "bsonType": "binData",
