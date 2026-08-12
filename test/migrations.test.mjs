@@ -472,7 +472,7 @@ if (!URL) {
   test('the shopOwner validator declares the verify-email slot, and requires no member of it', async () => {
     const { $jsonSchema } = (await collInfo('shopOwner')).options.validator;
 
-    assert.deepEqual($jsonSchema.required, ['login', 'personalData', 'registeredAt'], 'top-level required');
+    assert.deepEqual($jsonSchema.required, ['login', 'registeredAt'], 'top-level required');
     assert.equal($jsonSchema.additionalProperties, false, 'strict object');
     // `resetPwd` and `emailVerify` are strictly disjoint slots and must not be merged: sharing one
     // between the activation token and the reset token would let a hash issued by either flow
@@ -552,6 +552,32 @@ if (!URL) {
     // and no 2dsphere index exists over the field. `company.address.position` backs the map and
     // `companiesNearby`, so it stays in the clear and keeps every rule asserted below.
     await rejects('shopOwner', withPosition({ type: 'Point', coordinates: [new Double(9.6), new Double(45.6)] }));
+  });
+
+  // ⚠️ The document `shopOwnerRegister` writes, asserted as a whole rather than through the `required`
+  // array above: a stranger signing themselves up on the public site gives an address, a password and
+  // nothing else, and everything `personalData` holds — the name, the date of birth, the home address,
+  // the contacts — arrives later through onboarding. Putting `personalData` back into `required` makes
+  // this document unwritable, which turns public seller sign-up into a 500 on the insert, and no test
+  // reading the validator's shape would say why.
+  test('shopOwner accepts a self-registration, which is credentials and nothing else', async () => {
+    const selfRegistered = () => ({
+      _id: new ObjectId(),
+      login: { email: cipher(), password: 'x'.repeat(60) },
+      emailVerify: { hash: 'x'.repeat(50), requestTimes: new Int32(1), dateLastReq: new Date() },
+      registeredAt: new Date(),
+      // Set by that mutation and by no other creation path: an account an operator adds by hand is
+      // approved by the act of adding it. Never `false` anywhere — approval `$unset`s the field.
+      waitApprov: true,
+    });
+
+    await accepts('shopOwner', selfRegistered());
+
+    // The block stays all-or-nothing. Optional does not mean partial: an onboarded shop owner is a
+    // complete record, so a half-filled one is still refused.
+    const halfFilled = selfRegistered();
+    halfFilled.personalData = { firstName: 'M', lastName: 'R' };
+    await rejects('shopOwner', halfFilled);
   });
 
   test('the shopOwner operator note is optional, top level, and opaque', async () => {
