@@ -52,7 +52,7 @@ data. Adding one word of a second language is a regression, not a style nit.
 | `scripts/seedKeygrip.js` | `yarn seed:keygrip` — the operator entry point for the above: connection, the `--force` flag, and what is printed (version and fingerprint, never a key). ⚠️ **Never wire it into a service's boot.** |
 | `test/` | Six vitest suites — the migration replay plus five unit suites. Layout and traps: [`REPO.md`](./REPO.md). |
 | `vitest.config.mjs` · `vitest.mutation.config.mjs` · `stryker.config.mjs` | Suite configs. Coverage gated at 100% on every metric; Stryker `thresholds.break: 100`, `concurrency: 1` (one real database). |
-| `qodana.yaml` / `qodana.sh` | Scan config and runner. Critical 0 / high 0, coverage 100 total / 100 fresh, SCA and license checks. |
+| `qodana.yaml` / `qodana.sh` | Scan config and runner. Critical 0 / high 0, coverage 100 total / 100 fresh, license check. Its vulnerable-dependency inspection is an offline heuristic that reports nothing — advisories are the trivy gate's job (E18-S11). |
 | `.githooks/pre-commit` · `pre-push` | Gates. What runs when, and why: [`REPO.md`](./REPO.md). |
 | `env` | Committed template for `.env`. `.env` itself is gitignored — dev Mongo credentials. |
 | `setup/mongodb.js` · `setup/redis.txt` | Manual one-off runbooks (DB users, dump/restore, Redis ACL). **Gitignored** — they hold real users, passwords and internal hostnames. A clone does not get them. |
@@ -360,9 +360,9 @@ validator and the `env` template are fine, and nothing else should be assumed to
 
 ## Gates
 
-commit → secret guard, coverage, Qodana. push → coverage, mutation, Qodana. All blocking, and a docs-only
-commit skips the last two. ⚠️ **A reachable MongoDB is therefore a prerequisite for committing**, not only
-for pushing. **Never lower a threshold and never remove a gate** — a migration whose branch is uncovered
+commit → secret guard, coverage, Qodana. push → trivy (dependency advisories), coverage, mutation, Qodana.
+All blocking, and a docs-only commit skips the last two. ⚠️ **A reachable MongoDB is therefore a
+prerequisite for committing**, not only for pushing. **Never lower a threshold and never remove a gate** — a migration whose branch is uncovered
 gets a test, and `test/migrationCalls.test.mjs` is the file to copy: it drives a migration against a fake
 db with no server anywhere, which is how the branches a real replay cannot reach get covered. Mechanics,
 bypasses and the Qodana exclusions: [`REPO.md`](./REPO.md).

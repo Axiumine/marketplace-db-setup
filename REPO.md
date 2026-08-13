@@ -225,9 +225,18 @@ consecutive runs confirm it.
 
 ## The hooks
 
-`.githooks/pre-push` is three blocking gates: `yarn test:cov` (the replay at 100% on every metric),
+`.githooks/pre-push` is four blocking gates: trivy (dependency advisories over `yarn.lock`, HIGH and
+CRITICAL, production tree only), `yarn test:cov` (the replay at 100% on every metric),
 `yarn test:mutation` (Stryker at 100), then Qodana (`./qodana.sh`). Not lint — that is the one omission
 left, and the hook's own header argues it.
+
+⚠️ **The trivy gate is new, and it is there because Qodana's dependency check does not report.** What
+Qodana runs is `VulnerableLibrariesLocal`, an offline heuristic that queries no advisory feed and answers
+zero on every repo on this platform; the class that does query one is bundled with the image and is in no
+profile — which is why the SCA line has left this repo's gate descriptions. Trivy reads `yarn.lock`
+natively, suppresses devDependencies and blocks on HIGH or CRITICAL. It is first because it is by far the
+cheapest gate here and needs neither node nor a reachable MongoDB. Bypass for a Docker or network outage,
+never for a finding: `SKIP_TRIVY=1 git push`. E18-S11.
 
 `.githooks/pre-commit` is the secret guard, then that same coverage gate, then that same scan, and the last
 two only when a staged path can move their verdict — sources, the dependency manifests, the scan and test
