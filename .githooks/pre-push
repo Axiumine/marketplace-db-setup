@@ -1,18 +1,19 @@
 #!/usr/bin/env bash
-# Three gates, all blocking:
-#   1. migrations + coverage — every migration replays against a real MongoDB and the
+# Four gates, all blocking:
+#   1. trivy                 — dependency advisories, HIGH+, production tree only (E18-S11)
+#   2. migrations + coverage — every migration replays against a real MongoDB and the
 #      run is gated at 100% on every metric (yarn test:cov)
-#   2. mutation              — Stryker, gated at 100 (yarn test:mutation)
-#   3. Qodana                — inspections, SAST, SCA, license audit, coverage (qodana.yaml)
+#   3. mutation              — Stryker, gated at 100 (yarn test:mutation)
+#   4. Qodana                — inspections, SAST, license audit, coverage (qodana.yaml)
 #
 # One omission left, down from three:
 #
 #   lint — there is no eslint.config.js and no .prettierrc here, the one exception
 #     on the platform. The content is applied migrations, and those are immutable:
 #     a formatter that rewrites a file nobody may edit produces a diff nobody may
-#     take. Qodana still inspects them (gate 3) — inspecting is not rewriting.
+#     take. Qodana still inspects them (gate 4) — inspecting is not rewriting.
 #
-# ⚠️ Gate 2 is new, and this header used to argue at length that it could not exist:
+# ⚠️ Gate 3 is new, and this header used to argue at length that it could not exist:
 # "there is no stryker.config.mjs and no test:mutation script. Mutating a migration means
 # mutating an immutable, already-applied file; the answer to a survivor there is never
 # 'edit the migration'." Both halves were wrong. There is a stryker.config.mjs now, and the
@@ -40,20 +41,25 @@
 # reverts them down — it fails loudly when a validator, an index or an ordering
 # breaks, which is exactly the class of bug that reaches production silently.
 #
-# Gate 3 was the newer half until gate 2 landed. `qodana.yaml` and `qodana.sh` had been sitting in this
+# Gate 4 was the newer half until gate 3 landed. `qodana.yaml` and `qodana.sh` had been sitting in this
 # repo since the sweep that gave the other nine a scan, with no hook calling either
 # of them — this was the last unwired Qodana on the platform. What it adds is the JS
-# inspections and taint analysis over migrations/, lib/ and setup/, the SCA
-# vulnerable-dependency check, the license audit — all of which read the tree and
-# package.json rather than the tests — and, since the coverage gate landed, a second
-# reading of the same lcov the gate above just wrote.
+# inspections and taint analysis over migrations/, lib/ and setup/, the license
+# audit — all of which read the tree and package.json rather than the tests — and,
+# since the coverage gate landed, a second reading of the same lcov the gate above
+# just wrote.
 #
-# Ahead of gate 1: node. Gates 1 and 2 shell out to yarn, and `engines.node` is a
+# ⚠️ That list used to include "the SCA vulnerable-dependency check", and it does not
+# any more: the inspection Qodana actually runs is `VulnerableLibrariesLocal`, an
+# offline heuristic that queries no advisory feed and reports zero everywhere. Gate 1
+# is what checks dependencies now — see its own header. E18-S11.
+#
+# Ahead of gate 2: node. Gates 2 and 3 shell out to yarn, and `engines.node` is a
 # HARD gate under yarn classic — a mismatch exits 1 with `The engine "node" is
 # incompatible with this module`, not a warning. Without the switch below, a push
 # from a shell on the machine default node dies before the first gate, under
-# whatever banner that gate prints, which is never what went wrong. Gate 3 does not
-# need it: qodana.sh runs the linter in a container and never calls node or yarn.
+# whatever banner that gate prints, which is never what went wrong. Gates 1 and 4 do
+# not need it: both run in a container and neither calls node or yarn.
 #
 # Enabled by `git config core.hooksPath .githooks`, which the package.json
 # `prepare` script sets automatically on `yarn install`.
@@ -160,7 +166,131 @@ MSG
 	exit 1
 fi
 
-echo "pre-push [1/3]: replaying every migration against a real MongoDB, gated at 100% coverage (yarn test:cov)…"
+# ---------------------------------------------------------------------------
+# Gate 1 — Trivy (dependency advisories). The three gates below ask whether the
+# code in this repo is correct; this one asks whether the code it installed is
+# safe. Nothing else on
+# the platform answered that question. Qodana's `VulnerableLibrariesLocal` is
+# armed in every qodana.yaml, runs on every commit and push, and reports zero
+# problems everywhere — because it is a 0.03 s offline heuristic that queries no
+# advisory feed at all. `VulnerableLibrariesGlobalInspection`, the class in the
+# same image that does call vulnerability-search.jetbrains.com, appears in no
+# profile file and in no scan log this workspace has ever produced. A security
+# check that cannot report is indistinguishable from a passing one. E18-S11.
+#
+# Not `yarn audit`: yarn 1 aborts the entire run over the unpublished
+# @axiumine/marketplace-common, and `npm audit` needs a package-lock.json this
+# workspace does not have. Trivy reads yarn.lock natively.
+#
+# ⚠️ It suppresses devDependencies by default, and that is the property that makes
+# this gate keepable rather than the one everybody learns to bypass: an advisory
+# in something only `yarn build` ever loads does not block a push. HIGH and
+# CRITICAL only, matching qodana.yaml's own `critical: 0 / high: 0`.
+#
+# ⚠️ --skip-dirs .stryker-tmp is load-bearing. A crashed mutation run leaves a
+# sandbox behind holding a COPY of yarn.lock as it was that day, and trivy reports
+# it as a second target with the same weight as the real one. One such sandbox in
+# this workspace still carried axios@0.21.4 and picomatch@2.3.1 after both had
+# left the actual tree — a finding about a file nobody installs from.
+#
+# The vulnerability database is a 100 MB+ download shared through the named docker
+# volume below, so only the first run on a machine pays for it, and it updates
+# itself independently of the pinned image tag: a tree that is clean today can go
+# red tomorrow with no commit in between. That is the gate working, not flaking.
+#
+# Bypass: `SKIP_TRIVY=1 git push` — for a Docker or network outage, never for a
+# finding.
+# ---------------------------------------------------------------------------
+
+if [ -n "${SKIP_TRIVY:-}" ]; then
+	echo 'pre-push [1/4]: dependency-advisory gate skipped — SKIP_TRIVY is set.' >&2
+else
+	# Same contract as the node and yarn checks above: a missing prerequisite blocks,
+	# it never warns and continues. A gate that steps aside when it cannot run is not
+	# a gate, it is a hole one condition lower.
+	trivy_block() {
+		local reason="$1"
+		shift
+		{
+			echo
+			echo '────────────────────────────────────────────────────────────────────────────'
+			echo "PUSH BLOCKED — $reason"
+			echo
+			echo 'Fix it with:'
+			echo
+			printf '    %s\n' "$@"
+			echo
+			echo 'Bypass once (every other gate still runs): SKIP_TRIVY=1 git push'
+			echo '────────────────────────────────────────────────────────────────────────────'
+		} >&2
+		exit 1
+	}
+
+	TRIVY_IMAGE='aquasec/trivy:0.70.0'
+
+	# An absent lockfile is not an empty one: trivy would find no language-specific
+	# file, report nothing and exit 0, which reads exactly like a clean tree.
+	[ -f yarn.lock ] ||
+		trivy_block 'yarn.lock is missing from the repo root — the scan would have nothing to read and would pass.' \
+			'git checkout yarn.lock'
+
+	command -v docker > /dev/null 2>&1 ||
+		trivy_block 'docker not found in PATH — the scan runs inside the pinned trivy container.' \
+			'# install Docker Engine, then push again:' \
+			'https://docs.docker.com/engine/install/'
+
+	docker info > /dev/null 2>&1 ||
+		trivy_block 'docker daemon not reachable.' \
+			'sudo systemctl start docker'
+
+	docker image inspect "$TRIVY_IMAGE" > /dev/null 2>&1 ||
+		trivy_block "trivy image $TRIVY_IMAGE is not present locally." \
+			"docker pull $TRIVY_IMAGE"
+
+	echo "pre-push [1/4]: checking dependency advisories ($TRIVY_IMAGE)…"
+
+	# --db-repository is not a preference: from here mirror.gcr.io answers 404 for
+	# the database layer and trivy treats that as fatal rather than falling back to
+	# its second source. The mount is read-only — the scan reads the tree and the
+	# cache volume, and writes nothing into the repo.
+	if ! docker run --rm \
+		-v "$PWD":/src:ro \
+		-v trivy-db-cache:/root/.cache/trivy \
+		"$TRIVY_IMAGE" fs \
+		--db-repository ghcr.io/aquasecurity/trivy-db:2 \
+		--scanners vuln \
+		--skip-dirs node_modules \
+		--skip-dirs .stryker-tmp \
+		--skip-dirs .qodana \
+		--severity HIGH,CRITICAL \
+		--exit-code 1 \
+		--skip-version-check \
+		/src; then
+		cat >&2 <<'MSG'
+
+────────────────────────────────────────────────────────────────────────────
+PUSH BLOCKED — a HIGH or CRITICAL advisory in the production tree, or the scan
+could not run. Both exit 1; the output above says which.
+
+Every finding is printed with its CVE id, the version installed and the version
+that fixes it. In order:
+
+  1. Upgrade the dependency. If it is transitive, `yarn why <name>` names the one
+     that pulls it in, and that is the one to move.
+  2. If the package is only ever loaded by the toolchain, it belongs in
+     devDependencies — moving it there is the fix, and the scan stops seeing it.
+  3. Only when there is no upgrade path: a `.trivyignore` entry, one line per CVE
+     id, with a comment naming the risk-register row that accepted it. Reviewed,
+     per finding, dated. Never a --severity edit, never a blanket ignore.
+────────────────────────────────────────────────────────────────────────────
+MSG
+		exit 1
+	fi
+
+	echo 'pre-push [1/4]: no HIGH or CRITICAL advisory in the production tree.'
+fi
+
+echo "pre-push [2/4]: replaying every migration against a real MongoDB, gated at 100% coverage (yarn test:cov)…"
 
 if ! yarn test:cov; then
 	cat >&2 <<'MSG'
@@ -199,7 +329,7 @@ MSG
 fi
 
 # ---------------------------------------------------------------------------
-# Gate 2 — mutation. Coverage asks whether a line RAN; mutation asks whether a
+# Gate 3 — mutation. Coverage asks whether a line RAN; mutation asks whether a
 # test would have FAILED had that line been wrong, and in this repo the two
 # answers diverged by half: 100% coverage, 52.92% mutation score.
 #
@@ -213,10 +343,10 @@ fi
 # `dbOwner` on that one database).
 #
 # ⚠️ No SKIP_TESTS-style reuse is possible: Stryker runs the suite once per mutant
-# under its own instrumentation, so nothing gate 1 produced can stand in for it.
+# under its own instrumentation, so nothing gate 2 produced can stand in for it.
 # ---------------------------------------------------------------------------
 
-echo 'pre-push [2/3]: mutation testing, gated at 100 (yarn test:mutation) — ~9 minutes, concurrency 1…'
+echo 'pre-push [3/4]: mutation testing, gated at 100 (yarn test:mutation) — ~9 minutes, concurrency 1…'
 
 if ! yarn test:mutation; then
 	cat >&2 <<'MSG'
@@ -262,7 +392,7 @@ MSG
 fi
 
 # ---------------------------------------------------------------------------
-# Gate 3 — Qodana. It runs here as well as in pre-commit, for two reasons that
+# Gate 4 — Qodana. It runs here as well as in pre-commit, for two reasons that
 # pre-commit structurally cannot cover.
 #
 # 1. `git merge --no-ff` never fires pre-commit. Git runs that hook for
@@ -278,7 +408,7 @@ fi
 #    merge, standing on main, which is exactly the revision the baseline wants.
 #
 # SKIP_TESTS=1, exactly as the other thirteen repos pass it: qodana.sh would
-# otherwise re-run `yarn test:cov` to produce coverage/lcov.info, and gate 1 above
+# otherwise re-run `yarn test:cov` to produce coverage/lcov.info, and gate 2 above
 # has just written it. Worth being precise about why the flag matters and not only
 # that it saves a replay — qodana.sh runs the suite as `yarn test:cov || true`, so
 # a regenerated report comes with its exit code swallowed. Reusing the one the
@@ -358,7 +488,7 @@ docker image inspect "$LINTER" > /dev/null 2>&1 ||
 		'# get a project token from https://qodana.cloud, then:' \
 		"echo 'QODANA_TOKEN=<token>' >> .env"
 
-echo "pre-push [3/3]: enforcing the Qodana gate ($LINTER)…"
+echo "pre-push [4/4]: enforcing the Qodana gate ($LINTER)…"
 
 if ! SKIP_TESTS=1 ./qodana.sh --results-dir .qodana/results; then
 	cat >&2 <<'MSG'
@@ -367,8 +497,9 @@ if ! SKIP_TESTS=1 ./qodana.sh --results-dir .qodana/results; then
 PUSH BLOCKED — Qodana failed.
 
 The gate lives in qodana.yaml: severityThresholds critical 0 / high 0,
-testCoverageThresholds 100 total / 100 fresh, plus the SCA vulnerable-dependency
-check and the third-party license audit. Findings are listed above, with a report
+testCoverageThresholds 100 total / 100 fresh, plus the third-party license audit
+(its vulnerable-dependency inspection is the offline heuristic E18-S11 measured at
+zero — the real check is the trivy gate above). Findings are listed above, with a report
 link on qodana.cloud.
 
 Local SARIF: .qodana/results/qodana.sarif.json
