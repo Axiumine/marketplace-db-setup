@@ -38,6 +38,24 @@ hold — a product type that differs in its category and not in its shape does n
 filenames, the `description` strings inside validators, test identifiers, comments and the demo seed's
 data. Adding one word of a second language is a regression, not a style nit.
 
+## ⚠️ NEVER run the mutation gate by hand
+
+`yarn test:mutation` is **hook-only**. It runs when the `pre-push` hook calls it and at no other time —
+not to check a change, not before a commit, not on one file, not to confirm a survivor is fixed. Do not
+invoke `stryker` directly either.
+
+This does not weaken anything: the threshold stays 100, `pre-push` still blocks, and no survivor is ever
+answered by lowering a number. What changes is **who starts the run**. A full pass costs tens of minutes
+and holds the whole machine at 28 workers while it lasts, so an on-demand run is time taken from the
+person waiting for the work.
+
+Go through the package script if a run is ever authorised — never `npx stryker run`, which skips whatever
+the script sets up around it.
+
+A survivor is answered by writing the test it names and letting the next push run the gate. If a mutant
+has to be reproduced first, apply it by hand in the source and run `yarn test` — that is seconds, it
+names the tests that should have failed, and it costs nobody the machine.
+
 ## Layout
 
 | Path | Purpose |
