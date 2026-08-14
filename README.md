@@ -38,7 +38,11 @@ Recurring field names: `personalData` is personal/registry data · `registeredAt
 `defaultAddress` is the `user`'s chosen delivery address, stored as a pointer into `addresses` rather than
 as a flag on it · `publicName` is the trading name, which is what `legalName` is not · `slug` is the URL
 segment, on `company`, `item` and `itemCategory` · `published` means the owner has put it live, and every
-public read filters on it.
+public read filters on it · `image`, on `item`, is a **file name and nothing else** — the bytes live at
+`STATIC_FOLDER/item/<idCompany>/<image>`, and the two path segments are already on the document, so the
+field stores neither a path nor a URL. Its pattern is anchored at both ends for that reason: the value is
+interpolated straight into a URL by whoever renders it, and an unanchored one is a traversal. Optional —
+an item may have no picture, and that absence is what a card reads before choosing a placeholder.
 
 References are plain ObjectIds and nothing enforces them — nothing stops a company pointing at a shopOwner
 that was never created, which is why `companyDel` checks in application code before stamping `deleted`.

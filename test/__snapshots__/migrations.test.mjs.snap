@@ -640,6 +640,11 @@ exports[`the full validator of every collection is frozen > item validator 1`] =
         "bsonType": "bool",
         "description": "false while a draft; a public read also requires the company to be published"
       },
+      "image": {
+        "bsonType": "string",
+        "pattern": "^[a-f0-9]{24}\\\\.[a-z0-9]{3,4}$",
+        "description": "file name of the item picture under STATIC_FOLDER/item/<idCompany>/ — absent while it has none"
+      },
       "deleted": {
         "bsonType": "date"
       },
