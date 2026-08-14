@@ -1146,6 +1146,27 @@ if (!URL) {
     await accepts('item', validItem({ deleted: new Date() }));
   });
 
+  test('the item picture is an optional file name, and only a file name', async () => {
+    // Optional, and absent on every item that predates the field. `itemAdd` names the file after the
+    // item's own _id, which is what the 24-hex half of the pattern says.
+    await accepts('item', validItem());
+    await accepts('item', validItem({ image: `${new ObjectId().toHexString()}.webp` }));
+
+    // The extension is deliberately open at 3-4 characters rather than pinned to webp: uploadTempImage
+    // re-encodes everything to webp today, and a second format later must not need a rebuild.
+    await accepts('item', validItem({ image: `${new ObjectId().toHexString()}.jpg` }));
+
+    // ⚠️ The assertions that matter. Three frontends interpolate this value straight into a URL, so a
+    // path — relative, absolute or traversing — must not be storable in the first place.
+    const id = new ObjectId().toHexString();
+    await rejects('item', validItem({ image: `../../${id}.webp` }));
+    await rejects('item', validItem({ image: `/etc/passwd` }));
+    await rejects('item', validItem({ image: `item/${id}.webp` }));
+    await rejects('item', validItem({ image: `${id.toUpperCase()}.webp` }));
+    await rejects('item', validItem({ image: `${id}.webpx` }));
+    await rejects('item', validItem({ image: id }));
+  });
+
   test('the item slug is unique per company, not globally', async () => {
     // The route is /shop/:slug/item/:itemSlug, so the company segment already disambiguates. A global
     // unique would put one shop's URLs at the mercy of another shop's catalogue: the second shop to
