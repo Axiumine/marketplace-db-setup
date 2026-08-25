@@ -264,6 +264,15 @@ exports[`the full index set of every collection is frozen > user indexes 1`] = `
     },
     "name": "login.email_unique",
     "unique": true
+  },
+  {
+    "key": {
+      "deleted": 1,
+      "disabled": 1,
+      "registeredAt": -1,
+      "_id": -1
+    },
+    "name": "tbl_active_registeredAt"
   }
 ]"
 `;

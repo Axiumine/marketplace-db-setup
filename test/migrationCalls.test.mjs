@@ -127,9 +127,11 @@ const normalize = (value) => {
  * call counts, the same final database on an empty server, and an error on any server where the
  * collection already exists. Per-method buckets record both as "one create and nine indexes".
  *
- * The five methods here are every method the seven migrations call between them, and each of them
+ * The six methods here are every method the eight migrations call between them, and each of them
  * resolves. An unimplemented method is a `TypeError` naming itself, which is the failure a migration
- * that starts calling something new should produce — not a silently recorded no-op.
+ * that starts calling something new should produce — not a silently recorded no-op. `dropIndex` is
+ * the newest and arrived with the first migration that alters rather than creates: a create's `down`
+ * drops the whole collection and takes its indexes with it, an alter's has to name what it undoes.
  */
 function recordingDb() {
   const log = [];
@@ -144,6 +146,9 @@ function recordingDb() {
         },
         async drop() {
           log.push({ call: 'drop', name });
+        },
+        async dropIndex(indexName) {
+          log.push({ call: 'dropIndex', name, indexName });
         },
         async insertOne(doc) {
           log.push({ call: 'insertOne', name, doc });
@@ -165,8 +170,8 @@ function recordingDb() {
  * no driver call is made at all, so a snapshot of the call log alone cannot tell "skipped and said
  * so" from "skipped silently" from "the guard was removed and the message is dead code".
  *
- * ⚠️ The migration is called with `db` alone and no client. Six of the seven take nothing else; the
- * seventh takes a `MongoClient` and uses it only on the branch this fake cannot drive — see the seed
+ * ⚠️ The migration is called with `db` alone and no client. Seven of the eight take nothing else; the
+ * eighth takes a `MongoClient` and uses it only on the branch this fake cannot drive — see the seed
  * tests at the foot of the file.
  */
 const record = async (migration, direction) => {
@@ -191,7 +196,8 @@ const recordBoth = async (file, seedDemo) => {
 };
 
 /*
- * The six collection migrations.
+ * The seven schema migrations — the six that create a collection and the one that adds an index to
+ * `user` after the fact.
  *
  * ⚠️ Each is required to be IDENTICAL in both states of `SEED_DEMO`, and that is the half of this
  * worth having. `SEED_DEMO` is an environment flag a developer flips to get a usable dev database; a

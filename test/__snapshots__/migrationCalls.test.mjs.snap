@@ -1376,3 +1376,37 @@ exports[`20260301000600-seed-demo.js — with SEED_DEMO on, down deletes the thr
   "logged": []
 }"
 `;
+
+exports[`20260825000000-user-add-tbl-active-index.js — up() and down() issue exactly these driver calls > down 1`] = `
+"{
+  "calls": [
+    {
+      "call": "dropIndex",
+      "name": "user",
+      "indexName": "tbl_active_registeredAt"
+    }
+  ],
+  "logged": []
+}"
+`;
+
+exports[`20260825000000-user-add-tbl-active-index.js — up() and down() issue exactly these driver calls > up 1`] = `
+"{
+  "calls": [
+    {
+      "call": "createIndex",
+      "name": "user",
+      "key": {
+        "deleted": 1,
+        "disabled": 1,
+        "registeredAt": -1,
+        "_id": -1
+      },
+      "options": {
+        "name": "tbl_active_registeredAt"
+      }
+    }
+  ],
+  "logged": []
+}"
+`;
