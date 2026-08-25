@@ -33,13 +33,17 @@
 // drop and replay the whole database ONCE for the file, and getting the mapping wrong
 // would drop and re-migrate the database around every single test instead.
 //
-// ⚠️ **Every migration here CREATES a collection; none alters one.** Each of the six
-// collections is declared once, in its final shape, validator and indexes together — there
-// is no widen → backfill → narrow ladder anywhere in this directory and no `collMod` at
-// all. So there is no intermediate state for this suite to walk through: the migrations are
-// applied once at the top, every assertion below reads the one state they produce, and the
-// only `down`s in the file are the seed's and the final teardown. A test that needs to pop
-// a migration to see what it is testing is a sign an alter has crept back in.
+// ⚠️ **Every migration here creates a collection, with exactly one exception, and the
+// exception adds an index and nothing else.** Each of the six collections is declared once,
+// in its final shape, validator and indexes together — there is no widen → backfill →
+// narrow ladder anywhere in this directory and no `collMod` at all. `20260825000000` is the
+// one alter: it adds `tbl_active_registeredAt` to `user`, because the operator's customers
+// table (E19) needs something to page on and `20260301000300` had been applied for months.
+// It touches no validator and no document, so it still leaves nothing for this suite to walk
+// through: the migrations are applied once at the top, every assertion below reads the one
+// state they produce, and the only `down`s in the file are the seed's and the final
+// teardown. A test that needs to POP a migration to see what it is testing is still the sign
+// of a real alter — a widen/backfill/narrow ladder — and none has crept in.
 //
 // `expect` alongside assert/strict, and only for the two snapshot tests: `toMatchSnapshot`
 // has no node:assert equivalent, and hand-rolling one would mean writing the file-management
@@ -126,9 +130,13 @@ const EXPECTED_INDEXES = {
   // build from. It works only because `login.email` is DETERMINISTIC ciphertext: a unique index over
   // random ciphertext constrains nothing, since every insert of one address produces different bytes.
   admin: ['login.email_unique'],
-  // 20260301000300 — the same single index, and no 2dsphere over `addresses.position`: nothing
-  // queries customers by distance, which is what makes encrypting that point free.
-  user: ['login.email_unique'],
+  // 20260301000300 — the login unique, and no 2dsphere over `addresses.position`: nothing queries
+  // customers by distance, which is what makes encrypting that point free.
+  // 20260825000000 — `tbl_active_registeredAt`, added later and alone, for the operator's customers
+  // table. ⚠️ It is the ONLY one of `shopOwner`'s five that `user` gets a counterpart to: the other
+  // three tbl_active_* sort on names and a city, all of which are ciphertext here, and the chart's
+  // `registeredAt_series` has no customers-over-time chart to serve.
+  user: ['login.email_unique', 'tbl_active_registeredAt'],
   shopOwner: [
     // 20260301000100 — the login unique, one index per sort column the operator table exposes, and
     // the chart's unfiltered `registeredAt` range, which no tbl_active_* index can seek into because
@@ -1013,6 +1021,46 @@ if (!URL) {
     assert.equal(element.properties._id.bsonType, 'objectId', 'the address id stays an objectId');
     assert.deepEqual(element.required, ['_id', 'street', 'postalCode', 'city', 'province'],
       'an element needs an id, and its point stays optional');
+  });
+
+  test('the customers table index is shopOwner\'s registeredAt index and nothing else', async () => {
+    // Added by 20260825000000, months after the collection, and the only index on `user` that is not
+    // the login unique. Key ORDER is the assertion, as it is for `shopOwner`: equality fields first
+    // (`deleted`/`disabled`, both `{ $exists: false }`-shaped), then the sort, then `_id` as the
+    // tiebreak — without which two customers registered in the same millisecond have no order
+    // between pages and one can be shown twice while another is skipped.
+    assert.deepEqual(await indexKeys('user', 'tbl_active_registeredAt'), {
+      deleted: 1, disabled: 1, registeredAt: -1, _id: -1,
+    });
+    // Byte-identical to shopOwner's, and deliberately so: the two operator tables page the same way.
+    assert.deepEqual(await indexKeys('user', 'tbl_active_registeredAt'),
+      await indexKeys('shopOwner', 'tbl_active_registeredAt'));
+
+    // ⚠️ **The three sort columns the shop-owner table has and this one must never grow.** Every one
+    // of them is ciphertext on `user` — `firstName` and `lastName` random, `addresses[].city` random
+    // — and an index over random ciphertext orders by bytes that change on every encryption. It
+    // would not error; it would page in an order nobody can predict. ADR-029, and ADR-INDEX §4,
+    // which refuses making one of them queryable to get the column back.
+    const names = (await db.collection('user').indexes()).map((i) => i.name);
+    for (const absent of ['tbl_active_lastName_firstName', 'tbl_active_firstName', 'tbl_active_city']) {
+      assert.ok(!names.includes(absent), `${absent} must not exist on user`);
+    }
+    // `registeredAt_series` is absent for a different and much duller reason: there is no
+    // customers-over-time chart. It is not a boundary, and adding one would need no decision.
+    assert.ok(!names.includes('registeredAt_series'), 'no chart index without a chart');
+
+    // Sort directions uniform across the sort components, so the one index serves newest-first and
+    // oldest-first alike; `deleted`/`disabled` are matched rather than sorted and are excluded.
+    const keys = await indexKeys('user', 'tbl_active_registeredAt');
+    const sortDirections = Object.entries(keys)
+      .filter(([field]) => field !== 'deleted' && field !== 'disabled')
+      .map(([, direction]) => direction);
+    assert.equal(new Set(sortDirections).size, 1, 'tbl_active_registeredAt mixes sort directions');
+
+    // Not unique: two customers may register in the same millisecond, and a unique index would
+    // refuse the second one.
+    const built = (await db.collection('user').indexes()).find((i) => i.name === 'tbl_active_registeredAt');
+    assert.equal(built.unique, undefined, 'the table index must not be unique');
   });
 
   test('user refuses a defaultAddress that points nowhere', async () => {
