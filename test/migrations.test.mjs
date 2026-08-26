@@ -181,6 +181,18 @@ const EXPECTED_INDEXES = {
 
 const MIGRATION_FILES = fs.readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith('.js')).sort();
 
+// How many `mm.down()` calls it takes to pop the demo seed off the changelog: the seed itself plus
+// every migration that lands after it.
+//
+// ⚠️ **It was 1 until 2026-08-25 and nothing said so.** `migrate-mongo`'s `down` reverts exactly one
+// migration, the last applied, and the seed was the last file in the directory when the test below
+// was written — so a single call popped it. `20260825000000` and `20260826000000` then landed behind
+// it and that call started reverting the address cap instead, leaving the seeded documents in place;
+// under `yarn test` the collections are empty either way, so only `yarn test:seed` could see it, and
+// it failed there for a day. Derived from the file list rather than written as 3, so a tenth
+// migration does not break it again.
+const MIGRATIONS_FROM_SEED = MIGRATION_FILES.length - MIGRATION_FILES.indexOf(SEED_FILE);
+
 // The demo seed is gated on this, so the three counts it touches have two right answers and the
 // suite has to be run twice (`yarn test` and `yarn test:seed`) to see both. Read once here rather
 // than at each call site.
@@ -1474,7 +1486,10 @@ if (!URL) {
     // and it must not decide whether the encryption path is ever exercised. Under `yarn test` the pop
     // is a no-op; under `yarn test:seed` it deletes the three documents the run inserted. Either way
     // the three collections are empty of demo data at this line.
-    await mm.down(db, client); // 20260301000600-seed-demo
+    // ⚠️ **`MIGRATIONS_FROM_SEED` calls, not one.** `down` reverts the *last applied* migration, and
+    // the seed has not been that since `20260825000000` landed behind it — see the constant. The two
+    // that follow it are reverted with it and re-applied together at the end of this test.
+    for (let i = 0; i < MIGRATIONS_FROM_SEED; i++) await mm.down(db, client);
     for (const c of ['admin', 'shopOwner', 'company']) {
       assert.equal(await db.collection(c).countDocuments(), 0, `${c} empty before the seed is driven by hand`);
     }
@@ -1640,7 +1655,8 @@ if (!URL) {
 
     // Back to the state the run as a whole is in: re-applying restores the demo data under
     // `yarn test:seed` and writes nothing under `yarn test`.
-    assert.equal((await mm.up(db, client)).length, 1, 'the seed migration re-applied');
+    assert.equal((await mm.up(db, client)).length, MIGRATIONS_FROM_SEED,
+      'the seed migration and everything popped with it re-applied');
     const expected = SEEDED ? 1 : 0;
     for (const c of ['admin', 'shopOwner', 'company']) {
       assert.equal(await db.collection(c).countDocuments(), expected, `${c} back to the run's seeded state`);
