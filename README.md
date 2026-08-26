@@ -10,11 +10,16 @@ the three frontends beside this repo.
 
 Migrations run under [migrate-mongo](https://github.com/seppevs/migrate-mongo).
 
-**Seven migrations, six of which create a collection and one of which seeds demo data.** Each collection
-is declared once, in its final shape — validator, `additionalProperties: false`, encryption and every
-index in the same call. There is no `collMod` in this repository and no `<ts>-alter-<coll>.js`: a schema
-that is right the first time has nothing to widen, backfill or narrow, and a reader of `migrations/` sees
-the shape the database actually has rather than the sum of a ladder.
+**Nine migrations: six create a collection, one seeds demo data, and two alter `user` after the fact.**
+Each collection is still declared once, in its final shape — validator, `additionalProperties: false`,
+encryption and every index in the same call — so a reader of `migrations/` sees the shape the database
+actually has rather than the sum of a ladder.
+
+The two alters do not weaken that. `20260825000000` adds an index. `20260826000000` runs the repository's
+one `collMod`, capping `user.addresses` at six, and installs a shape `20260301000300` already carries:
+a database built from empty is capped before it runs, and the file exists only to move a database built
+before the cap onto it. There is still no widen → backfill → narrow ladder anywhere here, which is the
+thing worth not having.
 
 - **Rules for changing anything here** — [`CLAUDE.md`](./CLAUDE.md)
 - **Prerequisites, test suites, gates, hook mechanics** — [`REPO.md`](./REPO.md)

@@ -33,17 +33,24 @@
 // drop and replay the whole database ONCE for the file, and getting the mapping wrong
 // would drop and re-migrate the database around every single test instead.
 //
-// ⚠️ **Every migration here creates a collection, with exactly one exception, and the
-// exception adds an index and nothing else.** Each of the six collections is declared once,
-// in its final shape, validator and indexes together — there is no widen → backfill →
-// narrow ladder anywhere in this directory and no `collMod` at all. `20260825000000` is the
-// one alter: it adds `tbl_active_registeredAt` to `user`, because the operator's customers
-// table (E19) needs something to page on and `20260301000300` had been applied for months.
-// It touches no validator and no document, so it still leaves nothing for this suite to walk
-// through: the migrations are applied once at the top, every assertion below reads the one
-// state they produce, and the only `down`s in the file are the seed's and the final
-// teardown. A test that needs to POP a migration to see what it is testing is still the sign
-// of a real alter — a widen/backfill/narrow ladder — and none has crept in.
+// ⚠️ **Every migration here creates a collection, with exactly two exceptions, and neither
+// exception is a ladder.** Each of the six collections is declared once, in its final shape,
+// validator and indexes together — there is no widen → backfill → narrow sequence anywhere in
+// this directory. The two alters both target `user`, which `20260301000300` had applied months
+// before either was written: `20260825000000` adds `tbl_active_registeredAt`, because the
+// operator's customers table (E19) needs something to page on, and `20260826000000` caps
+// `addresses` at six with a `collMod`, because an unbounded array under a 16 MB document limit
+// is a ceiling nobody chose.
+//
+// Neither leaves this suite anything to walk through. The index one touches no validator and no
+// document. The `collMod` installs a shape that `lib/schemas/user.js` already carries, so on a
+// database built from empty it re-installs what `20260301000300` created and the end state is
+// identical whether it ran or not — which is why the assertions below read the shape rather than
+// the transition, and why `test/migrationCalls.test.mjs` is where that migration's `up` and
+// `down` are actually pinned. The migrations are applied once at the top, every assertion below
+// reads the one state they produce, and the only `down`s in the file are the seed's and the final
+// teardown. A test that needs to POP a migration to see what it is testing is still the sign of a
+// real ladder, and none has crept in.
 //
 // `expect` alongside assert/strict, and only for the two snapshot tests: `toMatchSnapshot`
 // has no node:assert equivalent, and hand-rolling one would mean writing the file-management
@@ -999,6 +1006,10 @@ if (!URL) {
     //    home, an office and a friend's flat; a shop owner has a residence.
     assert.equal($jsonSchema.properties.addresses.bsonType, 'array', 'addresses is a list');
     assert.equal($jsonSchema.properties.personalData.properties.address, undefined, 'and not a single block');
+    // A bounded list, since 20260826000000. The number is written here rather than imported from the
+    // builder: six is the contract three repositories agree on, and a test that read the constant
+    // would follow it wherever it went instead of noticing that it moved.
+    assert.equal($jsonSchema.properties.addresses.maxItems, 6, 'and a bounded one');
     // 3. `defaultAddress` has no counterpart at all — see the `$expr` test below.
     assert.equal($jsonSchema.properties.defaultAddress.bsonType, 'objectId', 'the default is a pointer');
     // 4. No `waitApprov`. Customers self-serve: there is no operator approval gate between
@@ -1091,6 +1102,43 @@ if (!URL) {
       () => db.collection('user').updateOne({ _id: customer._id }, { $pull: { addresses: { _id: home._id } } }),
       /failed validation/,
       'removing the element the pointer names is refused'
+    );
+    await db.collection('user').deleteOne({ _id: customer._id });
+  });
+
+  test('user refuses a seventh address', async () => {
+    // ⚠️ **The one length rule on this collection the server can still measure.** Since ADR-029 every
+    // member of an address is `binData`, and a `$jsonSchema` cannot measure a ciphertext — `maxLength`
+    // on a street is gone, and the 250/100/50 the service checks are all that is left of it.
+    // `maxItems` counts ELEMENTS, and an element is countable whatever it holds, so this bound is real
+    // where the others became advice.
+    //
+    // Six is written out rather than read from the builder: it is a contract three repositories agree
+    // on separately — this validator, `funUserAddressAdd` in the customer resource service, and the
+    // account area's Add button — and a test that imported the constant would follow it wherever it
+    // went instead of reporting that it moved.
+    const six = Array.from({ length: 6 }, () => addressElement());
+
+    await accepts('user', validUser({ addresses: six }));
+    await rejects('user', validUser({ addresses: [...six, addressElement()] }));
+
+    // And on the way through, not only on the way in — which is the half that matters, because nothing
+    // adds six addresses at once. `funUserAddressAdd` pushes one at a time behind a `$expr` guard of
+    // its own, and that guard exists to turn this refusal into a sentence the customer can read; it is
+    // not what makes the rule true. This is.
+    const customer = validUser({ addresses: six });
+    await db.collection('user').insertOne(customer);
+    await assert.rejects(
+      () => db.collection('user').updateOne({ _id: customer._id }, { $push: { addresses: addressElement() } }),
+      /failed validation/,
+      'a seventh address cannot be pushed in either'
+    );
+
+    // Replacing one of the six is still fine: the cap bounds the array, it does not freeze it.
+    await db.collection('user').updateOne(
+      { _id: customer._id },
+      { $set: { 'addresses.$[element].city': cipher() } },
+      { arrayFilters: [{ 'element._id': six[0]._id }] }
     );
     await db.collection('user').deleteOne({ _id: customer._id });
   });

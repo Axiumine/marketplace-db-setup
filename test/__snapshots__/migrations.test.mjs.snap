@@ -1058,6 +1058,7 @@ exports[`the full validator of every collection is frozen > user validator 1`] =
           },
           "addresses": {
             "bsonType": "array",
+            "maxItems": 6,
             "items": {
               "bsonType": "object",
               "title": "object",

@@ -81,8 +81,9 @@ Consequences to know before adding another one:
   never looks inside it. A future `$and` builder works the same way.
 - **⚠️ Anything that replaces a validator must restate BOTH clauses.** `collMod` replaces a validator
   wholesale; passing only the `$jsonSchema` half silently drops the `$expr` rule, and nothing fails
-  until a dangling pointer is written. There is no `collMod` in this repository today, which is exactly
-  why this is written down: the first one somebody adds is where it bites.
+  until a dangling pointer is written. `migrations/20260826000000-user-cap-addresses.js` is the one
+  `collMod` in this repository and it calls `validatorUser()`, which returns the whole `$and` pair and
+  offers no way to obtain half of it — copy that, never a hand-assembled `$jsonSchema`.
 - **Reading the schema half out of `listCollections` needs an unwrap.** `test/migrations.test.mjs`
   carries `jsonSchemaOf()` for exactly this; `options.validator.$jsonSchema` is `undefined` on both
   `user` and `company`, so a destructure reads as `undefined` and every assertion under it passes
