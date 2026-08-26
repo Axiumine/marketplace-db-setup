@@ -323,8 +323,20 @@ cannot be shared** — here, `funUserAddressAdd` in `marketplace-dev-user-authen
 `AddressList.tsx` in `marketplace-user`. This one is the rule; the other two exist so the customer gets
 a sentence instead of a failed write.
 
-No `2dsphere` over `addresses.position` — nothing queries customers by distance. Its only index is the
-shared `login.email_unique`, plus `tbl_active_registeredAt` from `20260825000000`.
+No `2dsphere` over `addresses.position` — nothing queries customers by distance. Three indexes: the shared
+`login.email_unique`, `tbl_active_registeredAt` from `20260825000000`, and `deleted_ttl`.
+
+⚠️ **`deleted_ttl` is the only TTL index on the platform and the only index anywhere here that *deletes*
+documents** — `{ deleted: 1 }`, `expireAfterSeconds` 2592000, thirty days (`phase1/NFR.md` open question 6,
+GDPR Art. 5(1)(e)). It is what makes `userDel` an erasure rather than a flag: `funUserDel` stamps `deleted`
+and writes nothing else, so without it the `personalData` and the `addresses` stay on disk for ever and
+`login.email_unique` holds the address against the person who closed the account. It lives in
+`lib/schemas/user.js` (`INDEXES_USER`) and **not** on the shared `INDEXES_LOGIN_EMAIL`, which would start
+destroying `admin` and `shopOwner` accounts thirty days after an operator disabled them. It is single-field
+because `expireAfterSeconds` is refused on a compound index, so it stands *beside* `tbl_active_registeredAt`
+rather than riding on it even though that index already leads with `deleted` — reading the two as duplicates
+and merging them removes the purge. ⚠️ On this collection `deleted` is therefore a destruction clock, not a
+status: a future write that wants to mark a customer without destroying them in a month needs its own field.
 
 ⚠️ **Anything that ever replaces this validator must restate *both* clauses.** A validator is set
 wholesale, never merged, so handing MongoDB the `$jsonSchema` half alone silently drops the `$expr` rule —
