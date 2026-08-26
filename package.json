@@ -36,13 +36,7 @@
     "@vitest/coverage-v8": "^4.1.10",
     "vitest": "^4.1.10"
   },
-  "author": "Giovanni Manzoni <info@thedoctorweb.com> (https://thedoctorweb.com)",
-  "contributors": [
-    {
-      "name": "The Doctor Web <info@thedoctorweb.com>",
-      "url": "https://thedoctorweb.com/"
-    }
-  ],
+  "author": "Giovanni Manzoni <dev@giovannimanzoni.com> (https://giovannimanzoni.com)",
   "repository": {
     "type": "git",
     "url": "git+ssh://git@github.com/Marketplace-Org/marketplace-db-setup.git"
