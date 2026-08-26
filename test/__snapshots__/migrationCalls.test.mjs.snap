@@ -1083,6 +1083,17 @@ exports[`20260301000300-create-user.js — up() and down() issue exactly these d
         "name": "login.email_unique",
         "unique": true
       }
+    },
+    {
+      "call": "createIndex",
+      "name": "user",
+      "key": {
+        "deleted": 1
+      },
+      "options": {
+        "name": "deleted_ttl",
+        "expireAfterSeconds": 2592000
+      }
     }
   ],
   "logged": []

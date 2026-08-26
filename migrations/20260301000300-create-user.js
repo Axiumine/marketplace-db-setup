@@ -41,14 +41,27 @@
 // self-serves. The only gate between registering and logging in is the email confirmation, which
 // `loginUser` checks against `emailVerify.valid`.
 //
-// The single index is the shared `login.email_unique` from `lib/schemas/account.js` — one account per
-// address, the same rule the other two collections have, and it is the credential the login form
-// matches on.
+// **Two indexes, from `lib/schemas/user.js`'s `INDEXES_USER`.** The first is the shared
+// `login.email_unique` from `lib/schemas/account.js` — one account per address, the same rule the
+// other two collections have, and it is the credential the login form matches on. The second is
+// `deleted_ttl`, and it belongs to this collection alone: thirty days after `funUserDel` stamps
+// `deleted`, the database removes the document. Without it the stamp erases nothing and the address
+// stays occupied for ever — see `INDEXES_USER` for why the TTL cannot ride on the operator table's
+// compound index and why it is not put on the shared constant.
+//
+// ⚠️ **This file was EDITED after it had been applied, on 2026-08-26, which the rest of this repo
+// forbids.** The platform owner chose it over a follow-up migration and rebuilt the database in the
+// same piece of work; `20260825000000` is the counter-example, adding an index to this very
+// collection from its own file for exactly the reason this edit ignores. What the choice costs is
+// worth naming, because nothing enforces it: `migrate-mongo-config.js` sets `useFileHash: false`, so
+// a database that already ran `20260301000300` sees no change here at all. It keeps ONE index, its
+// changelog entry keeps saying this migration ran, and this file keeps claiming two. **Any database
+// not rebuilt on or after 2026-08-26 is silently missing `deleted_ttl`** and its closed accounts are
+// never purged. Verify with `db.user.getIndexes()` rather than with the changelog.
 
 const { migrationCreation } = require('../lib/schemas/collection');
-const { INDEXES_LOGIN_EMAIL } = require('../lib/schemas/account');
-const { validatorUser } = require('../lib/schemas/user');
+const { validatorUser, INDEXES_USER } = require('../lib/schemas/user');
 
 const COLLECTION = 'user';
 
-module.exports = migrationCreation(COLLECTION, validatorUser(), INDEXES_LOGIN_EMAIL);
+module.exports = migrationCreation(COLLECTION, validatorUser(), INDEXES_USER);

@@ -137,13 +137,16 @@ const EXPECTED_INDEXES = {
   // build from. It works only because `login.email` is DETERMINISTIC ciphertext: a unique index over
   // random ciphertext constrains nothing, since every insert of one address produces different bytes.
   admin: ['login.email_unique'],
-  // 20260301000300 — the login unique, and no 2dsphere over `addresses.position`: nothing queries
-  // customers by distance, which is what makes encrypting that point free.
+  // 20260301000300 — the login unique and `deleted_ttl`, and no 2dsphere over `addresses.position`:
+  // nothing queries customers by distance, which is what makes encrypting that point free.
+  // `deleted_ttl` is the only TTL index on the platform and the only index that DELETES anything:
+  // thirty days after `deleted` is stamped the document goes, which is what turns `userDel`'s stamp
+  // into an erasure instead of a flag.
   // 20260825000000 — `tbl_active_registeredAt`, added later and alone, for the operator's customers
   // table. ⚠️ It is the ONLY one of `shopOwner`'s five that `user` gets a counterpart to: the other
   // three tbl_active_* sort on names and a city, all of which are ciphertext here, and the chart's
   // `registeredAt_series` has no customers-over-time chart to serve.
-  user: ['login.email_unique', 'tbl_active_registeredAt'],
+  user: ['login.email_unique', 'deleted_ttl', 'tbl_active_registeredAt'],
   shopOwner: [
     // 20260301000100 — the login unique, one index per sort column the operator table exposes, and
     // the chart's unfiltered `registeredAt` range, which no tbl_active_* index can seek into because
@@ -1035,11 +1038,11 @@ if (!URL) {
   });
 
   test('the customers table index is shopOwner\'s registeredAt index and nothing else', async () => {
-    // Added by 20260825000000, months after the collection, and the only index on `user` that is not
-    // the login unique. Key ORDER is the assertion, as it is for `shopOwner`: equality fields first
-    // (`deleted`/`disabled`, both `{ $exists: false }`-shaped), then the sort, then `_id` as the
-    // tiebreak — without which two customers registered in the same millisecond have no order
-    // between pages and one can be shown twice while another is skipped.
+    // Added by 20260825000000, months after the collection, and the only index on `user` that
+    // neither authenticates nor expires. Key ORDER is the assertion, as it is for `shopOwner`:
+    // equality fields first (`deleted`/`disabled`, both `{ $exists: false }`-shaped), then the sort,
+    // then `_id` as the tiebreak — without which two customers registered in the same millisecond
+    // have no order between pages and one can be shown twice while another is skipped.
     assert.deepEqual(await indexKeys('user', 'tbl_active_registeredAt'), {
       deleted: 1, disabled: 1, registeredAt: -1, _id: -1,
     });
@@ -1072,6 +1075,48 @@ if (!URL) {
     // refuse the second one.
     const built = (await db.collection('user').indexes()).find((i) => i.name === 'tbl_active_registeredAt');
     assert.equal(built.unique, undefined, 'the table index must not be unique');
+  });
+
+  test('deleted_ttl is what makes userDel an erasure, and it is user\'s alone', async () => {
+    // The one index on this platform that removes documents. `funUserDel` stamps `user.deleted` and
+    // writes nothing else — the personal data and the addresses stay exactly where they were — so
+    // without this index the "soft delete" would be a suspension under another name, and
+    // `login.email_unique` would hold the address against the person who closed the account for
+    // ever. The stamp is the decision to erase; this index is the erasure.
+    const ttl = (await db.collection('user').indexes()).find((i) => i.name === 'deleted_ttl');
+    assert.ok(ttl, 'user has deleted_ttl');
+
+    // Thirty days, in seconds, decided 2026-08-26 (`phase1/NFR.md` open question 6). The literal is
+    // written out here rather than imported from `lib/schemas/user.js`: importing the constant would
+    // make this assertion agree with any value that file ever holds, which is agreement rather than
+    // a test.
+    assert.equal(ttl.expireAfterSeconds, 2592000, 'thirty days, in seconds');
+
+    // ⚠️ Single-field, and it has no choice. `expireAfterSeconds` is only accepted on a single-field
+    // index — MongoDB refuses it on a compound one — which is why this exists ALONGSIDE
+    // `tbl_active_registeredAt` instead of riding on it, even though that index already leads with
+    // `deleted`. Anyone reading the two as a duplicate and merging them removes the purge.
+    assert.deepEqual(ttl.key, { deleted: 1 }, 'the TTL keys on deleted alone');
+    assert.equal(Object.keys(ttl.key).length, 1, 'a TTL index cannot be compound');
+
+    // Not unique — every closed account carries a `deleted` and two may be stamped in the same
+    // millisecond — and not partial, which would be the shape that expires only some of them.
+    assert.equal(ttl.unique, undefined, 'the TTL index must not be unique');
+    assert.equal(ttl.partialFilterExpression, undefined, 'the TTL index must not be partial');
+  });
+
+  test('no other collection expires anything', async () => {
+    // ⚠️ The guard on the temptation `INDEXES_USER` names: `login.email_unique` is shared by all
+    // three login collections, so a TTL added to `INDEXES_LOGIN_EMAIL` "for symmetry" would start
+    // destroying operator and shop-owner accounts thirty days after they were disabled — silently,
+    // a month later, with no code path to blame. Retention was decided for the customer's personal
+    // data and for nothing else: a shop owner's closure drags `company` and its Italian registration
+    // identifiers behind it, and what happens to those is undecided.
+    for (const c of APP_COLLECTIONS) {
+      const expiring = (await db.collection(c).indexes()).filter((i) => i.expireAfterSeconds !== undefined);
+      assert.deepEqual(expiring.map((i) => i.name), c === 'user' ? ['deleted_ttl'] : [],
+        `${c} expiring indexes`);
+    }
   });
 
   test('user refuses a defaultAddress that points nowhere', async () => {

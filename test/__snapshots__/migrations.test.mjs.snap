@@ -267,6 +267,13 @@ exports[`the full index set of every collection is frozen > user indexes 1`] = `
   },
   {
     "key": {
+      "deleted": 1
+    },
+    "name": "deleted_ttl",
+    "expireAfterSeconds": 2592000
+  },
+  {
+    "key": {
       "deleted": 1,
       "disabled": 1,
       "registeredAt": -1,
