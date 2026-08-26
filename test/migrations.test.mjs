@@ -1544,7 +1544,7 @@ if (!URL) {
       // still constrains something. Every login on the platform is this query.
       const { openEncryption, ALGORITHM_DETERMINISTIC, ALGORITHM_RANDOM } = require('../lib/encryption.js');
       const encryption = await openEncryption(client, 'shopOwner');
-      const lookup = await encryption.encrypt('shopOwner@thedoctorweb.com',
+      const lookup = await encryption.encrypt('shopOwner@example.com',
         { keyAltName: 'shopOwner', algorithm: ALGORITHM_DETERMINISTIC });
       const found = await db.collection('shopOwner').findOne({ 'login.email': lookup });
       assert.ok(found, 'the account is findable by deterministically encrypted login address');
@@ -1565,7 +1565,7 @@ if (!URL) {
       // value where they are read. One `ClientEncryption` decrypts all three collections, because a
       // ciphertext names the data key that made it and the vault holds all three.
       for (const [document, field, expected] of [
-        [admin, 'login.email', 'info@thedoctorweb.com'],
+        [admin, 'login.email', 'info@example.com'],
         [admin, 'personalData.firstName', 'John'],
         [admin, 'personalData.lastName', 'Carter'],
         [owner, 'personalData.birth.date', new Date('1970-11-24T00:00:00Z')],
@@ -1573,7 +1573,7 @@ if (!URL) {
         [owner, 'personalData.address.postalCode', '02108'],
         [owner, 'personalData.address.province', 'MA'],
         [owner, 'personalData.contacts.mobile', '395458770'],
-        [owner, 'personalData.contacts.email', 'shopOwner@thedoctorweb.com'],
+        [owner, 'personalData.contacts.email', 'shopOwner@example.com'],
         [company, 'contactPerson', 'John Carter'],
         [company, 'administrator', 'John Carter']
       ]) {

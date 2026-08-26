@@ -26,6 +26,12 @@
 //   5c9a013fcf1448b9d885e000  shopOwner
 //   5c9a013fcf1448b9d885a000  company
 //
+// ⚠️ **This file was edited after it had been applied**, which the immutability rule forbids and which
+// the platform owner authorised on 2026-08-26: the three demo addresses carried the vendor's trading
+// name and now use `example.com`. A database seeded before that date keeps the old addresses — `up`
+// inserts by fixed `_id` and never fires again — so roll that seed back and re-apply it with
+// `SEED_DEMO=true`, or the login table in `SETUP.md` names credentials the database does not have.
+//
 // The demo password is bcrypt of "1234567890" for all three accounts. It is a hash of a published
 // value in a file that says so, seeded only behind a flag nobody sets in production.
 //
@@ -53,13 +59,13 @@ const ID_COMPANY = new ObjectId('5c9a013fcf1448b9d885a000');
 
 const admin = {
   _id: ID_ADMIN,
-  login: { email: 'info@thedoctorweb.com', password: DEMO_PWD },
+  login: { email: 'info@example.com', password: DEMO_PWD },
   personalData: { firstName: 'John', lastName: 'Carter' }
 };
 
 const shopOwner = {
   _id: ID_SHOP_OWNER,
-  login: { email: 'shopOwner@thedoctorweb.com', password: DEMO_PWD },
+  login: { email: 'shopOwner@example.com', password: DEMO_PWD },
   personalData: {
     firstName: 'John',
     lastName: 'Carter',
@@ -70,7 +76,7 @@ const shopOwner = {
       city: 'Boston',
       province: 'MA'
     },
-    contacts: { mobile: '395458770', email: 'shopOwner@thedoctorweb.com' }
+    contacts: { mobile: '395458770', email: 'shopOwner@example.com' }
   },
   registeredAt: new Date('2026-01-24T15:17:00Z')
 };
