@@ -1123,9 +1123,10 @@ if (!URL) {
     await rejects('user', validUser({ addresses: [...six, addressElement()] }));
 
     // And on the way through, not only on the way in — which is the half that matters, because nothing
-    // adds six addresses at once. `funUserAddressAdd` pushes one at a time behind a `$expr` guard of
-    // its own, and that guard exists to turn this refusal into a sentence the customer can read; it is
-    // not what makes the rule true. This is.
+    // adds six addresses at once. `funUserAddressAdd` pushes one at a time behind a guard of its own —
+    // an `addresses.5: {$exists: false}` clause in the update filter, not an `$expr`, which mongoose's
+    // process-wide `sanitizeFilter` refuses outright — and that guard exists to turn this refusal into
+    // a sentence the customer can read; it is not what makes the rule true. This is.
     const customer = validUser({ addresses: six });
     await db.collection('user').insertOne(customer);
     await assert.rejects(
