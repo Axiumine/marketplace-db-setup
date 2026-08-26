@@ -14,9 +14,11 @@ One of fifteen sub-repos.
 | why a validator shape is the way it is | [`lib/schemas/README.md`](./lib/schemas/README.md) |
 | anything cross-repo | parent `CLAUDE.md` |
 
-**Seven migrations, six of which create a collection and one of which seeds demo data.** Each collection
-is declared once, in its final shape — validator, `additionalProperties: false`, encryption and every
-index in one call. There is no `collMod` here and no `<ts>-alter-<coll>.js`.
+**Nine migrations: six create a collection, one seeds demo data, two alter `user`.** Each collection is
+declared once, in its final shape — validator, `additionalProperties: false`, encryption and every index
+in one call. The two alters are `20260825000000` (one index) and `20260826000000` (the repo's one
+`collMod`, capping `user.addresses` at six on databases built before the cap). No widen → backfill →
+narrow ladder anywhere.
 
 Six collections — `admin`, `shopOwner`, `company`, `user`, `itemCategory`, `item`:
 
@@ -124,15 +126,23 @@ reads as undefined and the first call dies with `TypeError: mm.config.set is not
 
 ## Authoring migrations — rules
 
-- **Every migration here creates a collection.** Six creates and one seed, no `collMod`, no
-  `<ts>-alter-<coll>.js`. A collection is declared once, in its final shape, so `migrations/` reads as
-  the schema the database has rather than as the sum of a ladder — and a reader never has to replay six
-  files in their head to learn what a field is today.
+- **A migration creates a collection unless it cannot.** Six creates, one seed, two alters on `user`. A
+  collection is declared once, in its final shape, so `migrations/` reads as the schema the database has
+  rather than as the sum of a ladder — and a reader never has to replay six files in their head to learn
+  what a field is today. An alter is what is left when the create has already been applied: it adds
+  something the create never had (`20260825000000`, an index), or it hands an existing database a shape
+  the create now carries and it does not (`20260826000000`, `maxItems` on `user.addresses`). In the
+  second case **the create migration stays the statement of record** — the alter is a catch-up, it is a
+  no-op on a fresh replay, and it must be written to be one.
 - **Migrations are immutable.** Never edit one that may already be applied anywhere — its `changelog`
   entry means it will not re-run. That is a rule about *applied* files: as long as every database that
   has run them can be dropped and replayed, correcting a shape means correcting the create and rebuilding
   in the same piece of work. The moment a database exists that cannot be rebuilt, the only legal change
-  is a new migration, and the first one will need a `collMod` helper that does not exist yet.
+  is a new migration. `20260826000000` is the pattern to copy for a validator change: `lib/schemas/`
+  edited so a replay is right, plus a `collMod` restating the **whole** validator so an applied database
+  catches up. ⚠️ `collMod` does not re-validate what is already stored — a document that violates the new
+  rule stays where it is and becomes unwritable on its next update, so check the collection for
+  violations before running one, not after.
 - **The shapes live in `lib/schemas/`, not in the migration.** The usual rule says a migration must be
   self-contained, because an edit to a shared helper retroactively changes what an applied migration
   means. That argument depends on a database existing that cannot be rebuilt, and **none does here**: one
@@ -304,8 +314,17 @@ form in has the details in front of them — which is a rule of that mutation, n
 `personalData.contacts` requires none of its members, unlike `shopOwner`'s: `login.email` is already the
 credential, so demanding a contact email would ask for the same address twice.
 
+`addresses` is capped at **six** elements (`maxItems`, added by `20260826000000`). It is the one length
+rule left on this collection that the server can measure: every member of an address is `binData` since
+ADR-029 and no `$jsonSchema` can measure a ciphertext, but the number of elements is countable whatever
+they hold. Without it the only ceiling was BSON's 16 MB, which is tens of thousands of addresses on one
+document that every read of that account loads whole. ⚠️ **Six is spelled in three repositories and
+cannot be shared** — here, `funUserAddressAdd` in `marketplace-dev-user-authenticated-resource`, and
+`AddressList.tsx` in `marketplace-user`. This one is the rule; the other two exist so the customer gets
+a sentence instead of a failed write.
+
 No `2dsphere` over `addresses.position` — nothing queries customers by distance. Its only index is the
-shared `login.email_unique`.
+shared `login.email_unique`, plus `tbl_active_registeredAt` from `20260825000000`.
 
 ⚠️ **Anything that ever replaces this validator must restate *both* clauses.** A validator is set
 wholesale, never merged, so handing MongoDB the `$jsonSchema` half alone silently drops the `$expr` rule —

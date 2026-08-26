@@ -127,17 +127,26 @@ const normalize = (value) => {
  * call counts, the same final database on an empty server, and an error on any server where the
  * collection already exists. Per-method buckets record both as "one create and nine indexes".
  *
- * The six methods here are every method the eight migrations call between them, and each of them
+ * The seven methods here are every method the nine migrations call between them, and each of them
  * resolves. An unimplemented method is a `TypeError` naming itself, which is the failure a migration
- * that starts calling something new should produce — not a silently recorded no-op. `dropIndex` is
- * the newest and arrived with the first migration that alters rather than creates: a create's `down`
+ * that starts calling something new should produce — not a silently recorded no-op. `dropIndex` and
+ * `command` are the two newest and both arrived with an alter rather than a create: a create's `down`
  * drops the whole collection and takes its indexes with it, an alter's has to name what it undoes.
+ *
+ * ⚠️ `command` is the reason this suite matters more than usual for `20260826000000`. That migration
+ * installs a validator and the real replay cannot see it do so — the create migration reads the same
+ * shared shape, so on a database built from empty the `collMod` re-installs a validator identical to
+ * the one already in place and the end state is the same whether it ran or not. Here the CALL is the
+ * evidence: what it asked for, in both directions, argument for argument.
  */
 function recordingDb() {
   const log = [];
   const db = {
     async createCollection(name, options) {
       log.push({ call: 'createCollection', name, options });
+    },
+    async command(spec) {
+      log.push({ call: 'command', spec });
     },
     collection(name) {
       return {
@@ -196,8 +205,8 @@ const recordBoth = async (file, seedDemo) => {
 };
 
 /*
- * The seven schema migrations — the six that create a collection and the one that adds an index to
- * `user` after the fact.
+ * The eight schema migrations — the six that create a collection, the one that adds an index to `user`
+ * after the fact, and the one that caps its addresses.
  *
  * ⚠️ Each is required to be IDENTICAL in both states of `SEED_DEMO`, and that is the half of this
  * worth having. `SEED_DEMO` is an environment flag a developer flips to get a usable dev database; a
