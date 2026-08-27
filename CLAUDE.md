@@ -244,10 +244,12 @@ global unique would force the second shop to sell a "blue-shirt-2" because of a 
 It is required, unlike `company.slug`: the collection is created empty, so nothing is stranded by
 requiring it.
 
-⚠️ **There is no `price`, deliberately.** Cart, order, delivery and payment have no model anywhere on this
-platform, so a price would be a guess at a currency, a precision, a VAT treatment and a discount model at
-once — and Decimal128, the type it wants, is a rejected write everywhere here. It arrives with the
-ordering tier, in one migration, after those questions are answered. The suite asserts the absence.
+⚠️ **There is no `price`, deliberately and permanently.** Cart, order, delivery and payment are permanently
+out of scope on this platform — ADR-038, the platform owner's decision of 2026-08-27 — so a price would be a
+guess at a currency, a precision, a VAT treatment and a discount model at once, with nothing that will ever
+resolve it — and Decimal128, the type it wants, is a rejected write everywhere here. **No migration adds
+this field**: there is no ordering tier to add it with, and a display-only price was offered and refused on
+the same day. The suite asserts the absence.
 
 Five indexes, each named for the read it serves: `idCompany_list` (the owner's catalogue),
 `idCompany_slug_unique` (the per-company rule, doubling as the item-page lookup),
