@@ -52,7 +52,7 @@ replay.
 |`user.js`|`validatorUser()`, `ADDRESS_ITEM`, `DEFAULT_ADDRESS_POINTS_INTO_ADDRESSES`. Returns an `$and` pair, always.|
 |`company.js`|`validatorCompany()`, `PUBLISHED_IMPLIES_LINKABLE`. Returns an `$and` pair, always. The legal record and the storefront in one collection, because a shop **is** a company.|
 |`itemCategory.js`|`validatorItemCategory()`. The two-level taxonomy — and ⚠️ its depth cap is **not** in it, because "my parent must itself be top-level" reads a different document and no validator can.|
-|`item.js`|`validatorItem()`. Domain-neutral, and deliberately without a `price`.|
+|`item.js`|`validatorItem()`. Domain-neutral, and deliberately without a `price` — permanently, ADR-038.|
 
 ## A validator is not always a `$jsonSchema`
 
