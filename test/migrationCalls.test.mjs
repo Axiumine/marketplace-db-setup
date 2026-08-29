@@ -127,11 +127,13 @@ const normalize = (value) => {
  * call counts, the same final database on an empty server, and an error on any server where the
  * collection already exists. Per-method buckets record both as "one create and nine indexes".
  *
- * The seven methods here are every method the nine migrations call between them, and each of them
+ * The nine methods here are every method the eleven migrations call between them, and each of them
  * resolves. An unimplemented method is a `TypeError` naming itself, which is the failure a migration
  * that starts calling something new should produce — not a silently recorded no-op. `dropIndex` and
- * `command` are the two newest and both arrived with an alter rather than a create: a create's `down`
- * drops the whole collection and takes its indexes with it, an alter's has to name what it undoes.
+ * `command` arrived with an alter rather than a create: a create's `down` drops the whole collection and
+ * takes its indexes with it, an alter's has to name what it undoes. `countDocuments` and `updateMany`
+ * are the newest, and both arrived with `20260829000000` — the first migration that has to look at what
+ * is stored before it changes the rules the storage is held to.
  *
  * ⚠️ `command` is the reason this suite matters more than usual for `20260826000000`. That migration
  * installs a validator and the real replay cannot see it do so — the create migration reads the same
@@ -164,6 +166,17 @@ function recordingDb() {
         },
         async deleteOne(filter) {
           log.push({ call: 'deleteOne', name, filter });
+        },
+        // ⚠️ Returns 0, so `20260829000000` records its guard and then proceeds. The refusal branch —
+        // a stranded suspension the migration will not run over — is driven against a REAL database in
+        // `test/migrations.test.mjs`, because what it is really asserting is that `collMod` does not
+        // re-validate, which no fake can be wrong about convincingly.
+        async countDocuments(filter) {
+          log.push({ call: 'countDocuments', name, filter });
+          return 0;
+        },
+        async updateMany(filter, update) {
+          log.push({ call: 'updateMany', name, filter, update });
         }
       };
     }
@@ -205,8 +218,9 @@ const recordBoth = async (file, seedDemo) => {
 };
 
 /*
- * The eight schema migrations — the six that create a collection, the one that adds an index to `user`
- * after the fact, and the one that caps its addresses.
+ * The ten schema migrations — the six that create a collection, the one that adds an index to `user`
+ * after the fact, the one that caps its addresses, the one that adds the four lifecycle paths to `user`
+ * and `shopOwner`, and the one that retires `deleted_ttl`.
  *
  * ⚠️ Each is required to be IDENTICAL in both states of `SEED_DEMO`, and that is the half of this
  * worth having. `SEED_DEMO` is an environment flag a developer flips to get a usable dev database; a

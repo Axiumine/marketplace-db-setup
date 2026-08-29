@@ -309,9 +309,25 @@ exports[`20260301000100-create-shopOwner.js — up() and down() issue exactly th
                 "bsonType": "date",
                 "description": "deletion date"
               },
+              "deletedBy": {
+                "bsonType": "objectId",
+                "description": "the admin who closed this account; absent means the holder closed it themselves"
+              },
               "disabled": {
                 "bsonType": "bool",
                 "description": "present and true: disabled, absent: login allowed"
+              },
+              "disabledBy": {
+                "bsonType": "objectId",
+                "description": "the admin who suspended this account"
+              },
+              "disabledReason": {
+                "bsonType": "binData",
+                "description": "why an admin suspended this account, encrypted, never visible to the account holder"
+              },
+              "scrubbedAt": {
+                "bsonType": "date",
+                "description": "when the retention sweep overwrote this account's personal data"
               },
               "waitApprov": {
                 "bsonType": "bool",
@@ -375,7 +391,12 @@ exports[`20260301000100-create-shopOwner.js — up() and down() issue exactly th
                 "bsonType": "int"
               }
             },
-            "additionalProperties": false
+            "additionalProperties": false,
+            "dependencies": {
+              "disabled": [
+                "disabledReason"
+              ]
+            }
           }
         },
         "validationLevel": "strict",
@@ -976,9 +997,25 @@ exports[`20260301000300-create-user.js — up() and down() issue exactly these d
                     "bsonType": "date",
                     "description": "deletion date"
                   },
+                  "deletedBy": {
+                    "bsonType": "objectId",
+                    "description": "the admin who closed this account; absent means the holder closed it themselves"
+                  },
                   "disabled": {
                     "bsonType": "bool",
                     "description": "present and true: disabled, absent: login allowed"
+                  },
+                  "disabledBy": {
+                    "bsonType": "objectId",
+                    "description": "the admin who suspended this account"
+                  },
+                  "disabledReason": {
+                    "bsonType": "binData",
+                    "description": "why an admin suspended this account, encrypted, never visible to the account holder"
+                  },
+                  "scrubbedAt": {
+                    "bsonType": "date",
+                    "description": "when the retention sweep overwrote this account's personal data"
                   },
                   "resetPwd": {
                     "bsonType": "object",
@@ -1034,7 +1071,12 @@ exports[`20260301000300-create-user.js — up() and down() issue exactly these d
                     "bsonType": "int"
                   }
                 },
-                "additionalProperties": false
+                "additionalProperties": false,
+                "dependencies": {
+                  "disabled": [
+                    "disabledReason"
+                  ]
+                }
               }
             },
             {
@@ -1589,9 +1631,25 @@ exports[`20260826000000-user-cap-addresses.js — up() and down() issue exactly 
                     "bsonType": "date",
                     "description": "deletion date"
                   },
+                  "deletedBy": {
+                    "bsonType": "objectId",
+                    "description": "the admin who closed this account; absent means the holder closed it themselves"
+                  },
                   "disabled": {
                     "bsonType": "bool",
                     "description": "present and true: disabled, absent: login allowed"
+                  },
+                  "disabledBy": {
+                    "bsonType": "objectId",
+                    "description": "the admin who suspended this account"
+                  },
+                  "disabledReason": {
+                    "bsonType": "binData",
+                    "description": "why an admin suspended this account, encrypted, never visible to the account holder"
+                  },
+                  "scrubbedAt": {
+                    "bsonType": "date",
+                    "description": "when the retention sweep overwrote this account's personal data"
                   },
                   "resetPwd": {
                     "bsonType": "object",
@@ -1647,7 +1705,12 @@ exports[`20260826000000-user-cap-addresses.js — up() and down() issue exactly 
                     "bsonType": "int"
                   }
                 },
-                "additionalProperties": false
+                "additionalProperties": false,
+                "dependencies": {
+                  "disabled": [
+                    "disabledReason"
+                  ]
+                }
               }
             },
             {
@@ -1694,6 +1757,309 @@ exports[`20260826000000-user-cap-addresses.js — up() and down() issue exactly 
 exports[`20260826000000-user-cap-addresses.js — up() and down() issue exactly these driver calls > up 1`] = `
 "{
   "calls": [
+    {
+      "call": "command",
+      "spec": {
+        "collMod": "user",
+        "validator": {
+          "$and": [
+            {
+              "$jsonSchema": {
+                "bsonType": "object",
+                "title": "user",
+                "required": [
+                  "login",
+                  "registeredAt"
+                ],
+                "properties": {
+                  "_id": {
+                    "bsonType": "objectId"
+                  },
+                  "login": {
+                    "bsonType": "object",
+                    "title": "object",
+                    "required": [
+                      "email",
+                      "password"
+                    ],
+                    "properties": {
+                      "email": {
+                        "bsonType": "binData",
+                        "description": "login address, deterministically encrypted — equality is the only query it supports"
+                      },
+                      "password": {
+                        "bsonType": "string",
+                        "minLength": 60,
+                        "maxLength": 60
+                      },
+                      "firstLogin": {
+                        "bsonType": "date"
+                      },
+                      "lastLogin": {
+                        "bsonType": "date"
+                      },
+                      "onboardingStep": {
+                        "bsonType": "string",
+                        "maxLength": 4
+                      },
+                      "onboardingDone": {
+                        "bsonType": "bool"
+                      },
+                      "rememberMe": {
+                        "bsonType": "bool"
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  "personalData": {
+                    "bsonType": "object",
+                    "title": "object",
+                    "required": [
+                      "firstName",
+                      "lastName"
+                    ],
+                    "properties": {
+                      "firstName": {
+                        "bsonType": "binData",
+                        "description": "given name, encrypted"
+                      },
+                      "lastName": {
+                        "bsonType": "binData",
+                        "description": "family name, encrypted"
+                      },
+                      "birth": {
+                        "bsonType": "object",
+                        "title": "object",
+                        "required": [
+                          "date"
+                        ],
+                        "properties": {
+                          "date": {
+                            "bsonType": "binData",
+                            "description": "date of birth, encrypted — no range query and no sort can reach it"
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      "contacts": {
+                        "bsonType": "object",
+                        "title": "object",
+                        "properties": {
+                          "mobile": {
+                            "bsonType": "binData",
+                            "description": "mobile number, encrypted"
+                          },
+                          "landline": {
+                            "bsonType": "binData",
+                            "description": "landline number, encrypted"
+                          },
+                          "email": {
+                            "bsonType": "binData",
+                            "description": "a second address to be reached on, encrypted — the credential is login.email"
+                          }
+                        },
+                        "additionalProperties": false
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  "addresses": {
+                    "bsonType": "array",
+                    "maxItems": 6,
+                    "items": {
+                      "bsonType": "object",
+                      "title": "object",
+                      "required": [
+                        "_id",
+                        "street",
+                        "postalCode",
+                        "city",
+                        "province"
+                      ],
+                      "properties": {
+                        "_id": {
+                          "bsonType": "objectId"
+                        },
+                        "label": {
+                          "bsonType": "binData",
+                          "description": "what the customer calls this address — \\"home\\", \\"office\\". Encrypted, optional, free text"
+                        },
+                        "street": {
+                          "bsonType": "binData",
+                          "description": "street and number, encrypted"
+                        },
+                        "postalCode": {
+                          "bsonType": "binData",
+                          "description": "postal code, encrypted — the exactly-5 rule cannot survive the ciphertext"
+                        },
+                        "city": {
+                          "bsonType": "binData",
+                          "description": "city, encrypted"
+                        },
+                        "province": {
+                          "bsonType": "binData",
+                          "description": "province, encrypted — the exactly-2 rule cannot survive the ciphertext"
+                        },
+                        "position": {
+                          "bsonType": "binData",
+                          "description": "GeoJSON point, encrypted whole — no 2dsphere index can read it, and none exists here"
+                        }
+                      },
+                      "additionalProperties": false
+                    },
+                    "description": "every address this customer has saved; the default is named by defaultAddress"
+                  },
+                  "defaultAddress": {
+                    "bsonType": "objectId",
+                    "description": "the _id of one element of addresses — see the $expr rule alongside this schema"
+                  },
+                  "registeredAt": {
+                    "bsonType": "date",
+                    "description": "sign-up date"
+                  },
+                  "deleted": {
+                    "bsonType": "date",
+                    "description": "deletion date"
+                  },
+                  "deletedBy": {
+                    "bsonType": "objectId",
+                    "description": "the admin who closed this account; absent means the holder closed it themselves"
+                  },
+                  "disabled": {
+                    "bsonType": "bool",
+                    "description": "present and true: disabled, absent: login allowed"
+                  },
+                  "disabledBy": {
+                    "bsonType": "objectId",
+                    "description": "the admin who suspended this account"
+                  },
+                  "disabledReason": {
+                    "bsonType": "binData",
+                    "description": "why an admin suspended this account, encrypted, never visible to the account holder"
+                  },
+                  "scrubbedAt": {
+                    "bsonType": "date",
+                    "description": "when the retention sweep overwrote this account's personal data"
+                  },
+                  "resetPwd": {
+                    "bsonType": "object",
+                    "title": "object",
+                    "required": [
+                      "resetDateReq",
+                      "resetHash"
+                    ],
+                    "properties": {
+                      "resetDateReq": {
+                        "bsonType": "date",
+                        "description": "request date"
+                      },
+                      "resetHash": {
+                        "bsonType": "string",
+                        "minLength": 50,
+                        "maxLength": 50,
+                        "description": "comparison hash"
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  "emailVerify": {
+                    "bsonType": "object",
+                    "title": "object",
+                    "properties": {
+                      "valid": {
+                        "bsonType": "bool",
+                        "description": "true once a verification link has been used"
+                      },
+                      "hash": {
+                        "bsonType": "string",
+                        "minLength": 50,
+                        "maxLength": 50,
+                        "description": "comparison hash, EMAIL_HASH_LEN in koa-utils"
+                      },
+                      "dateLastReq": {
+                        "bsonType": "date",
+                        "description": "request date, sets the 3-day window"
+                      },
+                      "requestTimes": {
+                        "bsonType": "int",
+                        "description": "wrong-hash attempts, the fifth deletes the account"
+                      },
+                      "newEmailTmp": {
+                        "bsonType": "binData",
+                        "description": "new email awaiting confirmation, deterministically encrypted — koa-utils looks the account up by it"
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  "__v": {
+                    "bsonType": "int"
+                  }
+                },
+                "additionalProperties": false,
+                "dependencies": {
+                  "disabled": [
+                    "disabledReason"
+                  ]
+                }
+              }
+            },
+            {
+              "$expr": {
+                "$or": [
+                  {
+                    "$eq": [
+                      {
+                        "$type": "$defaultAddress"
+                      },
+                      "missing"
+                    ]
+                  },
+                  {
+                    "$in": [
+                      "$defaultAddress",
+                      {
+                        "$map": {
+                          "input": {
+                            "$ifNull": [
+                              "$addresses",
+                              []
+                            ]
+                          },
+                          "in": "$$this._id"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "validationLevel": "strict",
+        "validationAction": "error"
+      }
+    }
+  ],
+  "logged": []
+}"
+`;
+
+exports[`20260829000000-account-lifecycle-fields.js — up() and down() issue exactly these driver calls > down 1`] = `
+"{
+  "calls": [
+    {
+      "call": "updateMany",
+      "name": "user",
+      "filter": {},
+      "update": {
+        "$unset": {
+          "deletedBy": "",
+          "disabledBy": "",
+          "disabledReason": "",
+          "scrubbedAt": ""
+        }
+      }
+    },
     {
       "call": "command",
       "spec": {
@@ -1954,6 +2320,832 @@ exports[`20260826000000-user-cap-addresses.js — up() and down() issue exactly 
         "validationLevel": "strict",
         "validationAction": "error"
       }
+    },
+    {
+      "call": "updateMany",
+      "name": "shopOwner",
+      "filter": {},
+      "update": {
+        "$unset": {
+          "deletedBy": "",
+          "disabledBy": "",
+          "disabledReason": "",
+          "scrubbedAt": ""
+        }
+      }
+    },
+    {
+      "call": "command",
+      "spec": {
+        "collMod": "shopOwner",
+        "validator": {
+          "$jsonSchema": {
+            "bsonType": "object",
+            "title": "shopOwner",
+            "required": [
+              "login",
+              "registeredAt"
+            ],
+            "properties": {
+              "_id": {
+                "bsonType": "objectId"
+              },
+              "login": {
+                "bsonType": "object",
+                "title": "object",
+                "required": [
+                  "email",
+                  "password"
+                ],
+                "properties": {
+                  "email": {
+                    "bsonType": "binData",
+                    "description": "login address, deterministically encrypted — equality is the only query it supports"
+                  },
+                  "password": {
+                    "bsonType": "string",
+                    "minLength": 60,
+                    "maxLength": 60
+                  },
+                  "firstLogin": {
+                    "bsonType": "date"
+                  },
+                  "lastLogin": {
+                    "bsonType": "date"
+                  },
+                  "onboardingStep": {
+                    "bsonType": "string",
+                    "maxLength": 4
+                  },
+                  "onboardingDone": {
+                    "bsonType": "bool"
+                  },
+                  "rememberMe": {
+                    "bsonType": "bool"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "personalData": {
+                "bsonType": "object",
+                "title": "object",
+                "required": [
+                  "firstName",
+                  "lastName",
+                  "birth",
+                  "address",
+                  "contacts"
+                ],
+                "properties": {
+                  "firstName": {
+                    "bsonType": "string",
+                    "maxLength": 100
+                  },
+                  "lastName": {
+                    "bsonType": "string",
+                    "maxLength": 100
+                  },
+                  "birth": {
+                    "bsonType": "object",
+                    "title": "object",
+                    "required": [
+                      "date"
+                    ],
+                    "properties": {
+                      "date": {
+                        "bsonType": "binData",
+                        "description": "date of birth, encrypted — no range query and no sort can reach it"
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  "address": {
+                    "bsonType": "object",
+                    "title": "object",
+                    "required": [
+                      "street",
+                      "postalCode",
+                      "city",
+                      "province"
+                    ],
+                    "properties": {
+                      "street": {
+                        "bsonType": "binData",
+                        "description": "street and number, encrypted"
+                      },
+                      "postalCode": {
+                        "bsonType": "binData",
+                        "description": "postal code, encrypted — the exactly-5 rule cannot survive the ciphertext"
+                      },
+                      "city": {
+                        "bsonType": "string",
+                        "maxLength": 100
+                      },
+                      "province": {
+                        "bsonType": "binData",
+                        "description": "province, encrypted — the exactly-2 rule cannot survive the ciphertext"
+                      },
+                      "position": {
+                        "bsonType": "binData",
+                        "description": "GeoJSON point, encrypted whole — no 2dsphere index can read it, and none exists here"
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  "contacts": {
+                    "bsonType": "object",
+                    "title": "object",
+                    "required": [
+                      "mobile",
+                      "email"
+                    ],
+                    "properties": {
+                      "mobile": {
+                        "bsonType": "binData",
+                        "description": "mobile number, encrypted"
+                      },
+                      "landline": {
+                        "bsonType": "binData",
+                        "description": "landline number, encrypted"
+                      },
+                      "email": {
+                        "bsonType": "binData",
+                        "description": "contact address, encrypted — randomly, unlike the login address, because nothing looks an account up by it"
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                },
+                "additionalProperties": false
+              },
+              "registeredAt": {
+                "bsonType": "date",
+                "description": "sign-up date"
+              },
+              "deleted": {
+                "bsonType": "date",
+                "description": "deletion date"
+              },
+              "disabled": {
+                "bsonType": "bool",
+                "description": "present and true: disabled, absent: login allowed"
+              },
+              "waitApprov": {
+                "bsonType": "bool",
+                "description": "present and true: may not log in until an admin approves this account"
+              },
+              "notes": {
+                "bsonType": "binData",
+                "description": "internal notes written by an admin about this shop owner, encrypted, never visible to them"
+              },
+              "resetPwd": {
+                "bsonType": "object",
+                "title": "object",
+                "required": [
+                  "resetDateReq",
+                  "resetHash"
+                ],
+                "properties": {
+                  "resetDateReq": {
+                    "bsonType": "date",
+                    "description": "request date"
+                  },
+                  "resetHash": {
+                    "bsonType": "string",
+                    "minLength": 50,
+                    "maxLength": 50,
+                    "description": "comparison hash"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "emailVerify": {
+                "bsonType": "object",
+                "title": "object",
+                "properties": {
+                  "valid": {
+                    "bsonType": "bool",
+                    "description": "true once a verification link has been used"
+                  },
+                  "hash": {
+                    "bsonType": "string",
+                    "minLength": 50,
+                    "maxLength": 50,
+                    "description": "comparison hash, EMAIL_HASH_LEN in koa-utils"
+                  },
+                  "dateLastReq": {
+                    "bsonType": "date",
+                    "description": "request date, sets the 3-day window"
+                  },
+                  "requestTimes": {
+                    "bsonType": "int",
+                    "description": "wrong-hash attempts, the fifth deletes the account"
+                  },
+                  "newEmailTmp": {
+                    "bsonType": "binData",
+                    "description": "new email awaiting confirmation, deterministically encrypted — koa-utils looks the account up by it"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "__v": {
+                "bsonType": "int"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "validationLevel": "strict",
+        "validationAction": "error"
+      }
+    }
+  ],
+  "logged": []
+}"
+`;
+
+exports[`20260829000000-account-lifecycle-fields.js — up() and down() issue exactly these driver calls > up 1`] = `
+"{
+  "calls": [
+    {
+      "call": "countDocuments",
+      "name": "user",
+      "filter": {
+        "disabled": true,
+        "disabledReason": {
+          "$exists": false
+        }
+      }
+    },
+    {
+      "call": "countDocuments",
+      "name": "shopOwner",
+      "filter": {
+        "disabled": true,
+        "disabledReason": {
+          "$exists": false
+        }
+      }
+    },
+    {
+      "call": "command",
+      "spec": {
+        "collMod": "user",
+        "validator": {
+          "$and": [
+            {
+              "$jsonSchema": {
+                "bsonType": "object",
+                "title": "user",
+                "required": [
+                  "login",
+                  "registeredAt"
+                ],
+                "properties": {
+                  "_id": {
+                    "bsonType": "objectId"
+                  },
+                  "login": {
+                    "bsonType": "object",
+                    "title": "object",
+                    "required": [
+                      "email",
+                      "password"
+                    ],
+                    "properties": {
+                      "email": {
+                        "bsonType": "binData",
+                        "description": "login address, deterministically encrypted — equality is the only query it supports"
+                      },
+                      "password": {
+                        "bsonType": "string",
+                        "minLength": 60,
+                        "maxLength": 60
+                      },
+                      "firstLogin": {
+                        "bsonType": "date"
+                      },
+                      "lastLogin": {
+                        "bsonType": "date"
+                      },
+                      "onboardingStep": {
+                        "bsonType": "string",
+                        "maxLength": 4
+                      },
+                      "onboardingDone": {
+                        "bsonType": "bool"
+                      },
+                      "rememberMe": {
+                        "bsonType": "bool"
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  "personalData": {
+                    "bsonType": "object",
+                    "title": "object",
+                    "required": [
+                      "firstName",
+                      "lastName"
+                    ],
+                    "properties": {
+                      "firstName": {
+                        "bsonType": "binData",
+                        "description": "given name, encrypted"
+                      },
+                      "lastName": {
+                        "bsonType": "binData",
+                        "description": "family name, encrypted"
+                      },
+                      "birth": {
+                        "bsonType": "object",
+                        "title": "object",
+                        "required": [
+                          "date"
+                        ],
+                        "properties": {
+                          "date": {
+                            "bsonType": "binData",
+                            "description": "date of birth, encrypted — no range query and no sort can reach it"
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      "contacts": {
+                        "bsonType": "object",
+                        "title": "object",
+                        "properties": {
+                          "mobile": {
+                            "bsonType": "binData",
+                            "description": "mobile number, encrypted"
+                          },
+                          "landline": {
+                            "bsonType": "binData",
+                            "description": "landline number, encrypted"
+                          },
+                          "email": {
+                            "bsonType": "binData",
+                            "description": "a second address to be reached on, encrypted — the credential is login.email"
+                          }
+                        },
+                        "additionalProperties": false
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  "addresses": {
+                    "bsonType": "array",
+                    "maxItems": 6,
+                    "items": {
+                      "bsonType": "object",
+                      "title": "object",
+                      "required": [
+                        "_id",
+                        "street",
+                        "postalCode",
+                        "city",
+                        "province"
+                      ],
+                      "properties": {
+                        "_id": {
+                          "bsonType": "objectId"
+                        },
+                        "label": {
+                          "bsonType": "binData",
+                          "description": "what the customer calls this address — \\"home\\", \\"office\\". Encrypted, optional, free text"
+                        },
+                        "street": {
+                          "bsonType": "binData",
+                          "description": "street and number, encrypted"
+                        },
+                        "postalCode": {
+                          "bsonType": "binData",
+                          "description": "postal code, encrypted — the exactly-5 rule cannot survive the ciphertext"
+                        },
+                        "city": {
+                          "bsonType": "binData",
+                          "description": "city, encrypted"
+                        },
+                        "province": {
+                          "bsonType": "binData",
+                          "description": "province, encrypted — the exactly-2 rule cannot survive the ciphertext"
+                        },
+                        "position": {
+                          "bsonType": "binData",
+                          "description": "GeoJSON point, encrypted whole — no 2dsphere index can read it, and none exists here"
+                        }
+                      },
+                      "additionalProperties": false
+                    },
+                    "description": "every address this customer has saved; the default is named by defaultAddress"
+                  },
+                  "defaultAddress": {
+                    "bsonType": "objectId",
+                    "description": "the _id of one element of addresses — see the $expr rule alongside this schema"
+                  },
+                  "registeredAt": {
+                    "bsonType": "date",
+                    "description": "sign-up date"
+                  },
+                  "deleted": {
+                    "bsonType": "date",
+                    "description": "deletion date"
+                  },
+                  "deletedBy": {
+                    "bsonType": "objectId",
+                    "description": "the admin who closed this account; absent means the holder closed it themselves"
+                  },
+                  "disabled": {
+                    "bsonType": "bool",
+                    "description": "present and true: disabled, absent: login allowed"
+                  },
+                  "disabledBy": {
+                    "bsonType": "objectId",
+                    "description": "the admin who suspended this account"
+                  },
+                  "disabledReason": {
+                    "bsonType": "binData",
+                    "description": "why an admin suspended this account, encrypted, never visible to the account holder"
+                  },
+                  "scrubbedAt": {
+                    "bsonType": "date",
+                    "description": "when the retention sweep overwrote this account's personal data"
+                  },
+                  "resetPwd": {
+                    "bsonType": "object",
+                    "title": "object",
+                    "required": [
+                      "resetDateReq",
+                      "resetHash"
+                    ],
+                    "properties": {
+                      "resetDateReq": {
+                        "bsonType": "date",
+                        "description": "request date"
+                      },
+                      "resetHash": {
+                        "bsonType": "string",
+                        "minLength": 50,
+                        "maxLength": 50,
+                        "description": "comparison hash"
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  "emailVerify": {
+                    "bsonType": "object",
+                    "title": "object",
+                    "properties": {
+                      "valid": {
+                        "bsonType": "bool",
+                        "description": "true once a verification link has been used"
+                      },
+                      "hash": {
+                        "bsonType": "string",
+                        "minLength": 50,
+                        "maxLength": 50,
+                        "description": "comparison hash, EMAIL_HASH_LEN in koa-utils"
+                      },
+                      "dateLastReq": {
+                        "bsonType": "date",
+                        "description": "request date, sets the 3-day window"
+                      },
+                      "requestTimes": {
+                        "bsonType": "int",
+                        "description": "wrong-hash attempts, the fifth deletes the account"
+                      },
+                      "newEmailTmp": {
+                        "bsonType": "binData",
+                        "description": "new email awaiting confirmation, deterministically encrypted — koa-utils looks the account up by it"
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  "__v": {
+                    "bsonType": "int"
+                  }
+                },
+                "additionalProperties": false,
+                "dependencies": {
+                  "disabled": [
+                    "disabledReason"
+                  ]
+                }
+              }
+            },
+            {
+              "$expr": {
+                "$or": [
+                  {
+                    "$eq": [
+                      {
+                        "$type": "$defaultAddress"
+                      },
+                      "missing"
+                    ]
+                  },
+                  {
+                    "$in": [
+                      "$defaultAddress",
+                      {
+                        "$map": {
+                          "input": {
+                            "$ifNull": [
+                              "$addresses",
+                              []
+                            ]
+                          },
+                          "in": "$$this._id"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "validationLevel": "strict",
+        "validationAction": "error"
+      }
+    },
+    {
+      "call": "command",
+      "spec": {
+        "collMod": "shopOwner",
+        "validator": {
+          "$jsonSchema": {
+            "bsonType": "object",
+            "title": "shopOwner",
+            "required": [
+              "login",
+              "registeredAt"
+            ],
+            "properties": {
+              "_id": {
+                "bsonType": "objectId"
+              },
+              "login": {
+                "bsonType": "object",
+                "title": "object",
+                "required": [
+                  "email",
+                  "password"
+                ],
+                "properties": {
+                  "email": {
+                    "bsonType": "binData",
+                    "description": "login address, deterministically encrypted — equality is the only query it supports"
+                  },
+                  "password": {
+                    "bsonType": "string",
+                    "minLength": 60,
+                    "maxLength": 60
+                  },
+                  "firstLogin": {
+                    "bsonType": "date"
+                  },
+                  "lastLogin": {
+                    "bsonType": "date"
+                  },
+                  "onboardingStep": {
+                    "bsonType": "string",
+                    "maxLength": 4
+                  },
+                  "onboardingDone": {
+                    "bsonType": "bool"
+                  },
+                  "rememberMe": {
+                    "bsonType": "bool"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "personalData": {
+                "bsonType": "object",
+                "title": "object",
+                "required": [
+                  "firstName",
+                  "lastName",
+                  "birth",
+                  "address",
+                  "contacts"
+                ],
+                "properties": {
+                  "firstName": {
+                    "bsonType": "string",
+                    "maxLength": 100
+                  },
+                  "lastName": {
+                    "bsonType": "string",
+                    "maxLength": 100
+                  },
+                  "birth": {
+                    "bsonType": "object",
+                    "title": "object",
+                    "required": [
+                      "date"
+                    ],
+                    "properties": {
+                      "date": {
+                        "bsonType": "binData",
+                        "description": "date of birth, encrypted — no range query and no sort can reach it"
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  "address": {
+                    "bsonType": "object",
+                    "title": "object",
+                    "required": [
+                      "street",
+                      "postalCode",
+                      "city",
+                      "province"
+                    ],
+                    "properties": {
+                      "street": {
+                        "bsonType": "binData",
+                        "description": "street and number, encrypted"
+                      },
+                      "postalCode": {
+                        "bsonType": "binData",
+                        "description": "postal code, encrypted — the exactly-5 rule cannot survive the ciphertext"
+                      },
+                      "city": {
+                        "bsonType": "string",
+                        "maxLength": 100
+                      },
+                      "province": {
+                        "bsonType": "binData",
+                        "description": "province, encrypted — the exactly-2 rule cannot survive the ciphertext"
+                      },
+                      "position": {
+                        "bsonType": "binData",
+                        "description": "GeoJSON point, encrypted whole — no 2dsphere index can read it, and none exists here"
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  "contacts": {
+                    "bsonType": "object",
+                    "title": "object",
+                    "required": [
+                      "mobile",
+                      "email"
+                    ],
+                    "properties": {
+                      "mobile": {
+                        "bsonType": "binData",
+                        "description": "mobile number, encrypted"
+                      },
+                      "landline": {
+                        "bsonType": "binData",
+                        "description": "landline number, encrypted"
+                      },
+                      "email": {
+                        "bsonType": "binData",
+                        "description": "contact address, encrypted — randomly, unlike the login address, because nothing looks an account up by it"
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                },
+                "additionalProperties": false
+              },
+              "registeredAt": {
+                "bsonType": "date",
+                "description": "sign-up date"
+              },
+              "deleted": {
+                "bsonType": "date",
+                "description": "deletion date"
+              },
+              "deletedBy": {
+                "bsonType": "objectId",
+                "description": "the admin who closed this account; absent means the holder closed it themselves"
+              },
+              "disabled": {
+                "bsonType": "bool",
+                "description": "present and true: disabled, absent: login allowed"
+              },
+              "disabledBy": {
+                "bsonType": "objectId",
+                "description": "the admin who suspended this account"
+              },
+              "disabledReason": {
+                "bsonType": "binData",
+                "description": "why an admin suspended this account, encrypted, never visible to the account holder"
+              },
+              "scrubbedAt": {
+                "bsonType": "date",
+                "description": "when the retention sweep overwrote this account's personal data"
+              },
+              "waitApprov": {
+                "bsonType": "bool",
+                "description": "present and true: may not log in until an admin approves this account"
+              },
+              "notes": {
+                "bsonType": "binData",
+                "description": "internal notes written by an admin about this shop owner, encrypted, never visible to them"
+              },
+              "resetPwd": {
+                "bsonType": "object",
+                "title": "object",
+                "required": [
+                  "resetDateReq",
+                  "resetHash"
+                ],
+                "properties": {
+                  "resetDateReq": {
+                    "bsonType": "date",
+                    "description": "request date"
+                  },
+                  "resetHash": {
+                    "bsonType": "string",
+                    "minLength": 50,
+                    "maxLength": 50,
+                    "description": "comparison hash"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "emailVerify": {
+                "bsonType": "object",
+                "title": "object",
+                "properties": {
+                  "valid": {
+                    "bsonType": "bool",
+                    "description": "true once a verification link has been used"
+                  },
+                  "hash": {
+                    "bsonType": "string",
+                    "minLength": 50,
+                    "maxLength": 50,
+                    "description": "comparison hash, EMAIL_HASH_LEN in koa-utils"
+                  },
+                  "dateLastReq": {
+                    "bsonType": "date",
+                    "description": "request date, sets the 3-day window"
+                  },
+                  "requestTimes": {
+                    "bsonType": "int",
+                    "description": "wrong-hash attempts, the fifth deletes the account"
+                  },
+                  "newEmailTmp": {
+                    "bsonType": "binData",
+                    "description": "new email awaiting confirmation, deterministically encrypted — koa-utils looks the account up by it"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "__v": {
+                "bsonType": "int"
+              }
+            },
+            "additionalProperties": false,
+            "dependencies": {
+              "disabled": [
+                "disabledReason"
+              ]
+            }
+          }
+        },
+        "validationLevel": "strict",
+        "validationAction": "error"
+      }
+    }
+  ],
+  "logged": []
+}"
+`;
+
+exports[`20260829000100-user-retire-deleted-ttl.js — up() and down() issue exactly these driver calls > down 1`] = `
+"{
+  "calls": [
+    {
+      "call": "createIndex",
+      "name": "user",
+      "key": {
+        "deleted": 1
+      },
+      "options": {
+        "name": "deleted_ttl",
+        "expireAfterSeconds": 2592000
+      }
+    }
+  ],
+  "logged": []
+}"
+`;
+
+exports[`20260829000100-user-retire-deleted-ttl.js — up() and down() issue exactly these driver calls > up 1`] = `
+"{
+  "calls": [
+    {
+      "call": "dropIndex",
+      "name": "user",
+      "indexName": "deleted_ttl"
     }
   ],
   "logged": []

@@ -14,11 +14,12 @@ One of fifteen sub-repos.
 | why a validator shape is the way it is | [`lib/schemas/README.md`](./lib/schemas/README.md) |
 | anything cross-repo | parent `CLAUDE.md` |
 
-**Nine migrations: six create a collection, one seeds demo data, two alter `user`.** Each collection is
+**Eleven migrations: six create a collection, one seeds demo data, four alter.** Each collection is
 declared once, in its final shape — validator, `additionalProperties: false`, encryption and every index
-in one call. The two alters are `20260825000000` (one index) and `20260826000000` (the repo's one
-`collMod`, capping `user.addresses` at six on databases built before the cap). No widen → backfill →
-narrow ladder anywhere.
+in one call. The four alters are `20260825000000` (adds one index to `user`), `20260826000000` (a
+`collMod`, capping `user.addresses` at six on databases built before the cap), `20260829000000` (a
+`collMod` on **both** `user` and `shopOwner`, the four account-lifecycle paths and the reason rule) and
+`20260829000100` (drops `deleted_ttl` from `user`). No widen → backfill → narrow ladder anywhere.
 
 Six collections — `admin`, `shopOwner`, `company`, `user`, `itemCategory`, `item`:
 
@@ -126,14 +127,21 @@ reads as undefined and the first call dies with `TypeError: mm.config.set is not
 
 ## Authoring migrations — rules
 
-- **A migration creates a collection unless it cannot.** Six creates, one seed, two alters on `user`. A
-  collection is declared once, in its final shape, so `migrations/` reads as the schema the database has
-  rather than as the sum of a ladder — and a reader never has to replay six files in their head to learn
-  what a field is today. An alter is what is left when the create has already been applied: it adds
-  something the create never had (`20260825000000`, an index), or it hands an existing database a shape
-  the create now carries and it does not (`20260826000000`, `maxItems` on `user.addresses`). In the
-  second case **the create migration stays the statement of record** — the alter is a catch-up, it is a
-  no-op on a fresh replay, and it must be written to be one.
+- **A migration creates a collection unless it cannot.** Six creates, one seed, four alters. A collection
+  is declared once, in its final shape, so `migrations/` reads as the schema the database has rather than
+  as the sum of a ladder — and a reader never has to replay six files in their head to learn what a field
+  is today. An alter is what is left when the create has already been applied, and there are three kinds:
+  it adds something the create never had (`20260825000000`, an index; `20260829000000`, four paths and a
+  `dependencies` clause), it hands an existing database a shape the create now carries and it does not
+  (`20260826000000`, `maxItems` on `user.addresses`), or it **removes** something the create built
+  (`20260829000100`, `deleted_ttl`). In the second case **the create migration stays the statement of
+  record** — the alter is a catch-up, it is a no-op on a fresh replay, and it must be written to be one.
+  ⚠️ **The third kind cannot be a no-op and must not be written as one.** A fresh replay creates
+  `deleted_ttl` and drops it seconds later, which is the honest record: the index existed and was
+  retired. Editing it out of `INDEXES_USER` instead would rewrite what an applied migration built, and
+  would buy a `dropIndex` guarded against a state no replay can produce — a branch no test can reach.
+  What such an alter owes the reader is an END-STATE assertion in `test/migrations.test.mjs`, so the
+  shared shape is no longer the statement of what a database has.
 - **Migrations are immutable.** Never edit one that may already be applied anywhere — its `changelog`
   entry means it will not re-run. That is a rule about *applied* files: as long as every database that
   has run them can be dropped and replayed, correcting a shape means correcting the create and rebuilding
@@ -325,20 +333,32 @@ cannot be shared** — here, `funUserAddressAdd` in `marketplace-dev-user-authen
 `AddressList.tsx` in `marketplace-user`. This one is the rule; the other two exist so the customer gets
 a sentence instead of a failed write.
 
-No `2dsphere` over `addresses.position` — nothing queries customers by distance. Three indexes: the shared
-`login.email_unique`, `tbl_active_registeredAt` from `20260825000000`, and `deleted_ttl`.
+No `2dsphere` over `addresses.position` — nothing queries customers by distance. Two indexes: the shared
+`login.email_unique` and `tbl_active_registeredAt` from `20260825000000`.
 
-⚠️ **`deleted_ttl` is the only TTL index on the platform and the only index anywhere here that *deletes*
-documents** — `{ deleted: 1 }`, `expireAfterSeconds` 2592000, thirty days (`phase1/NFR.md` open question 6,
-GDPR Art. 5(1)(e)). It is what makes `userDel` an erasure rather than a flag: `funUserDel` stamps `deleted`
-and writes nothing else, so without it the `personalData` and the `addresses` stay on disk for ever and
-`login.email_unique` holds the address against the person who closed the account. It lives in
-`lib/schemas/user.js` (`INDEXES_USER`) and **not** on the shared `INDEXES_LOGIN_EMAIL`, which would start
-destroying `admin` and `shopOwner` accounts thirty days after an operator disabled them. It is single-field
-because `expireAfterSeconds` is refused on a compound index, so it stands *beside* `tbl_active_registeredAt`
-rather than riding on it even though that index already leads with `deleted` — reading the two as duplicates
-and merging them removes the purge. ⚠️ On this collection `deleted` is therefore a destruction clock, not a
-status: a future write that wants to mark a customer without destroying them in a month needs its own field.
+⚠️ **There is no TTL index on this platform and `deleted` is not a destruction clock.** `deleted_ttl` was
+one — `{ deleted: 1 }`, `expireAfterSeconds` 2592000 — and it was what made `userDel` an erasure rather than
+a flag. The platform owner reversed the outcome on 2026-08-29 (ADR-041): a closed account keeps its document
+**for ever** as the record that a person held one, and thirty days on a sweep overwrites the personal fields
+inside it with placeholders. A TTL index removes whole documents and has no other mode, and `collMod` can
+retune `expireAfterSeconds` but cannot strip TTL-ness off a live index, so it was dropped —
+`20260829000100`, unconditionally. ⚠️ `INDEXES_USER` in `lib/schemas/user.js` **still lists it**, because
+`20260301000300` did create it and an applied migration is immutable; read
+`test/migrations.test.mjs`'s end-state assertion, not the array, for what a database has. ⚠️ **Do not bring
+one back.** It destroys the rows the scrub exists to keep and takes each closed account's `login.email` with
+them — the address a re-registration inside the thirty days is meant to find, rename and step over
+(ADR-042) — and it reports neither.
+
+⚠️ **A suspended `user` or `shopOwner` must carry a reason, and MongoDB is what demands it.**
+`20260829000000` adds four paths to both collections — `deletedBy`, `disabledBy`, `disabledReason`
+(encrypted, `ALGORITHM_RANDOM`) and `scrubbedAt` — plus `dependencies: { disabled: ['disabledReason'] }`.
+`dependencies` demands presence and reads nothing, which is the only form the rule can take over a
+ciphertext; the 1000-character cap lives in the two Admin-tier mutations' GraphQL input validation and
+nowhere else. ⚠️ `deletedBy` **absent** means the holder closed their own account and **present** means an
+operator did — absence is the record, not a gap, so nothing may backfill it. ⚠️ `admin` gets none of the
+four: nobody has decided who suspends an operator. ⚠️ `collMod` never re-validates stored documents, so the
+migration **counts suspended documents with no reason and refuses to run** if it finds any rather than
+inventing a sentence no operator wrote — lift and re-apply those suspensions through the Admin tier first.
 
 ⚠️ **Anything that ever replaces this validator must restate *both* clauses.** A validator is set
 wholesale, never merged, so handing MongoDB the `$jsonSchema` half alone silently drops the `$expr` rule —
@@ -348,10 +368,15 @@ half of it.
 
 ### shopOwner
 
-- `notes` (top level, optional, `maxLength: 2000`) is what an **operator** wrote *about* an account, which
-  is why it is not inside `personalData` — that is what the shop owner declared about themselves. Nothing
-  in the ShopOwner tier reads it: `marketplace-dev-authenticated-*` does not load this model at all, so the
-  field cannot leak to the shop owner.
+- `notes` (top level, optional, **encrypted**) is what an **operator** wrote *about* an account, which is
+  why it is not inside `personalData` — that is what the shop owner declared about themselves. Nothing in
+  the ShopOwner tier reads it: `marketplace-dev-authenticated-*` does not load this model at all, so the
+  field cannot leak to the shop owner. ⚠️ It carries **no** `maxLength`, and cannot: it is `binData` here,
+  so a bound would measure the blob. The cap holds in the Admin tier's GraphQL input validation alone.
+- `disabledReason` (top level, optional, **encrypted**) is the second field of that kind and `user` now has
+  one too — an operator's words about a named person, which the person never reads. Same missing
+  `maxLength` for the same reason, and the same rule: `dependencies` can demand it is *there* beside a
+  `disabled`, and nothing anywhere can demand what it says.
 - `personalData.address.position` is the same GeoJSON point as `company.address.position`, in the same
   tuple form — but **optional**, with no `2dsphere` index. Deliberate: nothing queries shop owners by
   distance, and a coordinate cannot be derived from a street address without geocoding, so requiring it

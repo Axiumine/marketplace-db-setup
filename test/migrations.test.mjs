@@ -137,16 +137,17 @@ const EXPECTED_INDEXES = {
   // build from. It works only because `login.email` is DETERMINISTIC ciphertext: a unique index over
   // random ciphertext constrains nothing, since every insert of one address produces different bytes.
   admin: ['login.email_unique'],
-  // 20260301000300 — the login unique and `deleted_ttl`, and no 2dsphere over `addresses.position`:
-  // nothing queries customers by distance, which is what makes encrypting that point free.
-  // `deleted_ttl` is the only TTL index on the platform and the only index that DELETES anything:
-  // thirty days after `deleted` is stamped the document goes, which is what turns `userDel`'s stamp
-  // into an erasure instead of a flag.
+  // 20260301000300 — the login unique, and no 2dsphere over `addresses.position`: nothing queries
+  // customers by distance, which is what makes encrypting that point free.
+  // ⚠️ `deleted_ttl` is NOT in this list although `20260301000300` still creates it. `20260829000100`
+  // drops it again in the same replay (ADR-041): a closed account keeps its document for ever and only
+  // its personal data is overwritten, which is an outcome no TTL index can express. The end state is
+  // what this list describes.
   // 20260825000000 — `tbl_active_registeredAt`, added later and alone, for the operator's customers
   // table. ⚠️ It is the ONLY one of `shopOwner`'s five that `user` gets a counterpart to: the other
   // three tbl_active_* sort on names and a city, all of which are ciphertext here, and the chart's
   // `registeredAt_series` has no customers-over-time chart to serve.
-  user: ['login.email_unique', 'deleted_ttl', 'tbl_active_registeredAt'],
+  user: ['login.email_unique', 'tbl_active_registeredAt'],
   shopOwner: [
     // 20260301000100 — the login unique, one index per sort column the operator table exposes, and
     // the chart's unfiltered `registeredAt` range, which no tbl_active_* index can seek into because
@@ -1089,46 +1090,124 @@ if (!URL) {
     assert.equal(built.unique, undefined, 'the table index must not be unique');
   });
 
-  test('deleted_ttl is what makes userDel an erasure, and it is user\'s alone', async () => {
-    // The one index on this platform that removes documents. `funUserDel` stamps `user.deleted` and
-    // writes nothing else — the personal data and the addresses stay exactly where they were — so
-    // without this index the "soft delete" would be a suspension under another name, and
-    // `login.email_unique` would hold the address against the person who closed the account for
-    // ever. The stamp is the decision to erase; this index is the erasure.
-    const ttl = (await db.collection('user').indexes()).find((i) => i.name === 'deleted_ttl');
-    assert.ok(ttl, 'user has deleted_ttl');
-
-    // Thirty days, in seconds, decided 2026-08-26 (`phase1/NFR.md` open question 6). The literal is
-    // written out here rather than imported from `lib/schemas/user.js`: importing the constant would
-    // make this assertion agree with any value that file ever holds, which is agreement rather than
-    // a test.
-    assert.equal(ttl.expireAfterSeconds, 2592000, 'thirty days, in seconds');
-
-    // ⚠️ Single-field, and it has no choice. `expireAfterSeconds` is only accepted on a single-field
-    // index — MongoDB refuses it on a compound one — which is why this exists ALONGSIDE
-    // `tbl_active_registeredAt` instead of riding on it, even though that index already leads with
-    // `deleted`. Anyone reading the two as a duplicate and merging them removes the purge.
-    assert.deepEqual(ttl.key, { deleted: 1 }, 'the TTL keys on deleted alone');
-    assert.equal(Object.keys(ttl.key).length, 1, 'a TTL index cannot be compound');
-
-    // Not unique — every closed account carries a `deleted` and two may be stamped in the same
-    // millisecond — and not partial, which would be the shape that expires only some of them.
-    assert.equal(ttl.unique, undefined, 'the TTL index must not be unique');
-    assert.equal(ttl.partialFilterExpression, undefined, 'the TTL index must not be partial');
-  });
-
-  test('no other collection expires anything', async () => {
-    // ⚠️ The guard on the temptation `INDEXES_USER` names: `login.email_unique` is shared by all
-    // three login collections, so a TTL added to `INDEXES_LOGIN_EMAIL` "for symmetry" would start
-    // destroying operator and shop-owner accounts thirty days after they were disabled — silently,
-    // a month later, with no code path to blame. Retention was decided for the customer's personal
-    // data and for nothing else: a shop owner's closure drags `company` and its Italian registration
-    // identifiers behind it, and what happens to those is undecided.
+  test('deleted_ttl is retired, and nothing on this platform expires anything', async () => {
+    // ⚠️ **The assertion that catches a reintroduction.** Until 2026-08-29 this suite asserted the
+    // opposite — that `user` carried a TTL index over `deleted`, because that index was what turned
+    // `funUserDel`'s stamp into an erasure rather than a flag. ADR-041 reversed the outcome the platform
+    // owner wants: the document is kept for ever as the record that a person held an account, and at
+    // thirty days a sweep overwrites the personal fields inside it. A TTL index has one behaviour —
+    // remove the whole document — so it could not be retuned into that and had to go.
+    //
+    // ⚠️ Bringing one back breaks two things at once and reports neither. It destroys the rows the
+    // scrub exists to keep, and it frees each closed account's `login.email` by deleting the document
+    // holding it, which is not the rename a re-registration inside the window performs (ADR-042).
     for (const c of APP_COLLECTIONS) {
       const expiring = (await db.collection(c).indexes()).filter((i) => i.expireAfterSeconds !== undefined);
-      assert.deepEqual(expiring.map((i) => i.name), c === 'user' ? ['deleted_ttl'] : [],
-        `${c} expiring indexes`);
+      assert.deepEqual(expiring.map((i) => i.name), [], `${c} must carry no expiring index`);
     }
+
+    const names = (await db.collection('user').indexes()).map((i) => i.name);
+    assert.ok(!names.includes('deleted_ttl'), '20260829000100 must have dropped deleted_ttl');
+
+    // ⚠️ It was CREATED and then dropped in this same replay — `INDEXES_USER` still lists it, so that
+    // `20260301000300` keeps describing what it actually built and the drop needs no "if it is there"
+    // branch. Asserting the end state rather than the list is what makes that arrangement safe.
+    const dropped = MIGRATION_FILES.includes('20260829000100-user-retire-deleted-ttl.js');
+    assert.ok(dropped, 'the retirement migration is part of the replay');
+
+    // What stays. `tbl_active_registeredAt` leads with `deleted`, so the sweep's candidate query —
+    // a range on `deleted` plus `scrubbedAt: {$exists: false}` — walks this index's prefix and needs
+    // none of its own.
+    assert.ok(names.includes('tbl_active_registeredAt'), 'the sweep walks tbl_active_registeredAt');
+  });
+
+  test('user and shopOwner carry the four lifecycle paths, in these types and no others', async () => {
+    // The four ADR-044 paths, identical on both collections because role here is which collection you
+    // authenticate against rather than a field. `admin` deliberately has none of them: nobody has
+    // decided who suspends an operator or what a retention sweep owes one.
+    for (const [coll, valid] of [['user', validUser], ['shopOwner', validShopOwner]]) {
+      await accepts(coll, { ...valid(), deleted: new Date(), deletedBy: new ObjectId(), scrubbedAt: new Date() });
+      await accepts(coll, { ...valid(), disabled: true, disabledBy: new ObjectId(), disabledReason: cipher() });
+
+      // Both actors are ObjectIds and neither is a string. The id arrives from a GraphQL layer that
+      // hands out strings, so a missing cast is the realistic mistake rather than a hypothetical one.
+      await rejects(coll, { ...valid(), deletedBy: String(new ObjectId()) });
+      await rejects(coll, { ...valid(), disabled: true, disabledBy: String(new ObjectId()), disabledReason: cipher() });
+
+      // ⚠️ The reason is ciphertext at rest. A service that wrote it without encrypting would put an
+      // operator's sentence about a named person into the database in the clear, and this is the only
+      // place that is caught — the field is `binData` here and a `string` nowhere.
+      await rejects(coll, { ...valid(), disabled: true, disabledReason: 'spamming customers' });
+
+      // `scrubbedAt` is a real date and not the epoch millis a `Date.now()` would write. The sweep
+      // selects on its ABSENCE to find work, so a number here is not a cosmetic type error: it is a
+      // document the sweep would keep re-scrubbing, or skip, depending on which side wrote it.
+      await rejects(coll, { ...valid(), scrubbedAt: Date.now() });
+    }
+  });
+
+  test('a suspended account must say why, and the server is what demands it', async () => {
+    // The platform owner's rule of 2026-08-29, enforced by MongoDB rather than only by the mutation
+    // that writes it.
+    //
+    // ⚠️ A `dependencies` clause and not a `required` entry, because `disabled` is itself optional:
+    // requiring `disabledReason` unconditionally would refuse every account that was never suspended —
+    // which is nearly all of them.
+    //
+    // ⚠️ `dependencies` demands PRESENCE and reads nothing, and that is the only form this rule can
+    // take over an encrypted path. The server holds a blob; it cannot tell an explanation from an empty
+    // string, and the 1000-character cap the platform owner asked for therefore lives in the GraphQL
+    // input validation of the two Admin-tier mutations and has no counterpart here.
+    for (const [coll, valid] of [['user', validUser], ['shopOwner', validShopOwner]]) {
+      await rejects(coll, { ...valid(), disabled: true });
+      await accepts(coll, { ...valid(), disabled: true, disabledReason: cipher() });
+
+      // ⚠️ Closure is not suspension and owes no reason. `deleted` and `disabled` are fully independent
+      // — no code path on the platform sets both — and the commonest closure of all, a customer closing
+      // their own account, leaves `disabled` absent for ever. A rule that reached closures would refuse
+      // it.
+      await accepts(coll, { ...valid(), deleted: new Date() });
+      await accepts(coll, { ...valid(), deleted: new Date(), deletedBy: new ObjectId() });
+
+      // The clause keys on `disabled` being PRESENT, whatever it says. Nothing writes `false` — every
+      // reader on the platform tests presence, and the field is `$unset` rather than cleared — but a
+      // document that did carry one would owe a reason just the same, and it should.
+      await rejects(coll, { ...valid(), disabled: false });
+    }
+  });
+
+  test('20260829000000 refuses to run against a suspension it cannot make valid', async () => {
+    // ⚠️ `collMod` NEVER re-validates what is already stored. A document suspended before this
+    // migration cannot carry a `disabledReason` — the path did not exist — so it stays valid where it
+    // sits and becomes unwritable on its next update, INCLUDING the update that lifts the suspension.
+    // The symptom would be a 500 on an operator action weeks later with nothing pointing back here.
+    //
+    // The migration counts those documents first and refuses. It does not backfill: a reason is an
+    // operator's words about a named person, and a database should not vouch for a sentence nobody
+    // said. Lifting and re-applying the suspension through the Admin tier produces a true one.
+    //
+    // ⚠️ `bypassDocumentValidation` is how the fixture gets in, and that is the point rather than a
+    // shortcut — after the migration the validator refuses exactly this document, so going around it is
+    // the only way to stage the state an older build left behind.
+    const migration = require(path.join(MIGRATIONS_DIR, '20260829000000-account-lifecycle-fields.js'));
+    const stranded = { ...validUser(), disabled: true };
+
+    await db.collection('user').insertOne(stranded, { bypassDocumentValidation: true });
+
+    try {
+      await assert.rejects(
+        () => migration.up(db),
+        /user: 1 suspended document\(s\) carry no disabledReason/,
+        'the migration must refuse, naming the collection and the count',
+      );
+    } finally {
+      await db.collection('user').deleteOne({ _id: stranded._id });
+    }
+
+    // Both collections are counted before either validator is written, so the refusal above left the
+    // database exactly as it found it — and the same call goes through once nothing is stranded, which
+    // is what makes this a guard rather than a wall.
+    await migration.up(db);
   });
 
   test('user refuses a defaultAddress that points nowhere', async () => {
