@@ -11,7 +11,7 @@
 // split-brain the design removes — and would put key minting behind a network port.
 //
 // Everything this decides lives in lib/keygrip.js, unit-tested against a fake hash. What is here is the
-// part that cannot be: the connection, the flag, and what an operator reads afterwards.
+// part that cannot be: the connection, the flag, and what an admin reads afterwards.
 
 const dotenv = require('dotenv');
 const { createClient, createCluster } = require('redis');
@@ -57,13 +57,13 @@ async function main() {
 
     if (!result.written) {
       console.info(`A keygrip record already exists at "${keygripKey(env)}": version ${result.version} (${result.fp}).`);
-      console.info('Nothing was written. Rotating a live key set is `keygripRotate` in the operator panel, not this script.');
+      console.info('Nothing was written. Rotating a live key set is `keygripRotate` in the admin panel, not this script.');
       console.info('Re-run with --force ONLY to replace it wholesale — every session cookie signed under the old keys stops verifying.');
 
       return;
     }
 
-    // The fingerprint, because it is the string an operator compares against the holders table, and
+    // The fingerprint, because it is the string an admin compares against the holders table, and
     // never a key: this output lands in terminals, scrollback and screenshots.
     console.info(`Wrote keygrip record version ${result.version} (${result.fp}) to "${keygripKey(env)}".`);
     console.info(

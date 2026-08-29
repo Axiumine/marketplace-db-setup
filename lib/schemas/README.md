@@ -47,7 +47,7 @@ replay.
 |`encrypted.js`|`encryptedField(description)` → `{ bsonType: 'binData', description }`. All a validator can say about a ciphertext, and the ADR-029 seam: a field routed through this loses every `maxLength`, `minLength` and `pattern` it would otherwise carry, because the server cannot measure a blob.|
 |`geo.js`|`address({ maxLength, positionRequired, encrypted })` — the street-address block, shared by `company`, `shopOwner` and `user`. The GeoJSON node it builds from stays module-internal on purpose: every collection with a point carries the *same* point, and a swapped axis order is the one mistake a reader cannot see in a stored document.|
 |`account.js`|`LOGIN`, `RESET_PWD`, `EMAIL_VERIFY`, `DELETED`, `DISABLED`, `INDEXES_LOGIN_EMAIL` — what `admin`, `shopOwner` and `user` have in common, which is everything about being a thing you log in as. Role on this platform is *which collection you authenticate against* (ADR-002), so the three genuinely share one credential shape.|
-|`admin.js`|`validatorAdmin()`. The platform operator. No `registeredAt`, no `emailVerify`, no `waitApprov` — an operator account is created by another operator, not by a sign-up flow.|
+|`admin.js`|`validatorAdmin()`. The platform admin. No `registeredAt`, no `emailVerify`, no `waitApprov` — an admin account is created by another admin, not by a sign-up flow.|
 |`shopOwner.js`|`validatorShopOwner()`. ⚠️ The one collection with personal fields deliberately left in the clear — see below.|
 |`user.js`|`validatorUser()`, `ADDRESS_ITEM`, `DEFAULT_ADDRESS_POINTS_INTO_ADDRESSES`. Returns an `$and` pair, always.|
 |`company.js`|`validatorCompany()`, `PUBLISHED_IMPLIES_LINKABLE`. Returns an `$and` pair, always. The legal record and the storefront in one collection, because a shop **is** a company.|
@@ -58,7 +58,7 @@ replay.
 
 `validatorUser()` and `validatorCompany()` both return `$and: [ { $jsonSchema: … }, { $expr: … } ]`.
 That is not a stylistic difference: a MongoDB collection validator is a **query expression**, and
-`$jsonSchema` is only one operator you may use inside it. Anything a query can say, a validator can
+`$jsonSchema` is only one admin you may use inside it. Anything a query can say, a validator can
 enforce.
 
 `user` needs that because of `defaultAddress`, a top-level ObjectId naming one element of the document's
@@ -113,9 +113,9 @@ not "an address is personal data":
 - **`shopOwner` is the compromise, and the one deliberate hole.** `personalData.firstName`,
   `personalData.lastName` and `personalData.address.city` stay in the clear because
   `tbl_active_lastName_firstName`, `tbl_active_firstName` and `tbl_active_city` sort on them and the
-  operator table prefix-searches them with `/^term/i`. **Neither CSFLE algorithm survives that** —
+  admin table prefix-searches them with `/^term/i`. **Neither CSFLE algorithm survives that** —
   random supports no comparison at all, deterministic supports equality and nothing else — so
-  encrypting them would not make the operator table slower, it would make it *wrong*, silently.
+  encrypting them would not make the admin table slower, it would make it *wrong*, silently.
   ADR-029 records the trade and what would have to change to close it.
 
 ⚠️ **`login.email` is the one deterministically encrypted field, on all three login collections.** A

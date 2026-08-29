@@ -1,4 +1,4 @@
-// Optional demo/dev seed: one operator, one shop owner, one company.
+// Optional demo/dev seed: one admin, one shop owner, one company.
 //
 // Runs ONLY when `SEED_DEMO=true` — otherwise `up`/`down` are no-ops, so this migration is safe to
 // apply in every environment. It is last because it is the only file here that writes documents, and
@@ -120,7 +120,7 @@ const company = {
  *
  * `shopOwner`'s three clear fields are absent from its list on purpose, not by omission:
  * `personalData.firstName`, `personalData.lastName` and `personalData.address.city` are sorted and
- * prefix-searched by the operator table. `lib/schemas/shopOwner.js` carries the full argument.
+ * prefix-searched by the admin table. `lib/schemas/shopOwner.js` carries the full argument.
  *
  * ⚠️ Functions rather than constants. A top-level constant is evaluated once per process, the first
  * time migrate-mongo requires this file, so a mutation of one of these strings is baked in before any

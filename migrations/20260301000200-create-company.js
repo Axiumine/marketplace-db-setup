@@ -19,7 +19,7 @@
 // `deleted` is an optional DATE, not a bool — the same spelling `shopOwner` uses, and it means the
 // same thing: absent while the company is live, set to the instant of deletion afterwards. A bool
 // would answer "is it gone" and nothing else; the date also answers "since when", which is the
-// question an operator asks first. Every read path filters `{ $exists: false }` rather than a value,
+// question an admin asks first. Every read path filters `{ $exists: false }` rather than a value,
 // so the two spellings cost the same to query and only one carries the timestamp.
 //
 // ⚠️ Only `contactPerson` and `administrator` are encrypted, and the fourteen fields left alone are

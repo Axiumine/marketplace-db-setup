@@ -72,7 +72,7 @@ names the tests that should have failed, and it costs nobody the machine.
 | `lib/encryption.js` | The CSFLE half (ADR-029): opens a `ClientEncryption` against the master key at `CSFLE_MASTER_KEY_PATH`, mints or reuses one data key per collection in `<db>.__keyVault`, and encrypts a document field by field so the seed can write into collections whose personal fields are `binData` from the moment they are created. |
 | `lib/mongoUrl.js` | The `://user:pwd@` + `authSource` assembly, shared by the config (`MONGO_DEV_*`) and the tests (`MONGO_TEST_*`) so the two cannot drift. |
 | `lib/keygrip.js` | The ADR-034 one, and the only file here that has nothing to do with MongoDB: it mints or adopts the cookie-signing key array and seals it under `KEYGRIP_KEK`. ⚠️ **A deliberate duplicate of `marketplace-common/src/encryption/wrapKeygripKeys.mts`** — five services in another repo unwrap what it writes, no test spans the two, and a drift in the format shows up as a fleet that stops booting. Its header says what may not change alone. |
-| `scripts/seedKeygrip.js` | `yarn seed:keygrip` — the operator entry point for the above: connection, the `--force` flag, and what is printed (version and fingerprint, never a key). ⚠️ **Never wire it into a service's boot.** |
+| `scripts/seedKeygrip.js` | `yarn seed:keygrip` — the admin entry point for the above: connection, the `--force` flag, and what is printed (version and fingerprint, never a key). ⚠️ **Never wire it into a service's boot.** |
 | `test/` | Six vitest suites — the migration replay plus five unit suites. Layout and traps: [`REPO.md`](./REPO.md). |
 | `vitest.config.mjs` · `vitest.mutation.config.mjs` · `stryker.config.mjs` | Suite configs. Coverage gated at 100% on every metric; Stryker `thresholds.break: 100`, `concurrency: 1` (one real database). |
 | `qodana.yaml` / `qodana.sh` | Scan config and runner. Critical 0 / high 0, coverage 100 total / 100 fresh, license check. Its vulnerable-dependency inspection is an offline heuristic that reports nothing — advisories are the trivy gate's job (E18-S11). |
@@ -321,7 +321,7 @@ created gets neither.
 
 ⚠️ **`personalData` was a fourth divergence until 2026-08-12** and is not one now: it left `shopOwner`'s
 required list when `shopOwnerRegister` was built, so both collections take an email and a password at
-sign-up and collect the rest later. `shopOwnerAdd` still demands the whole block — an operator filling a
+sign-up and collect the rest later. `shopOwnerAdd` still demands the whole block — an admin filling a
 form in has the details in front of them — which is a rule of that mutation, not of the collection.
 
 `personalData.contacts` requires none of its members, unlike `shopOwner`'s: `login.email` is already the
@@ -341,7 +341,7 @@ No `2dsphere` over `addresses.position` — nothing queries customers by distanc
 `20260829000200`.
 
 ⚠️ **The last two are not one index doing two jobs, and the second cannot be folded into the first.**
-`tbl_active_registeredAt` leads with `deleted` and `disabled` because the operator's customers table
+`tbl_active_registeredAt` leads with `deleted` and `disabled` because the admin's customers table
 filters on both; the customers chart (E19 §6 question 2, answered 2026-08-29) bounds **neither**, since it
 counts every customer who ever registered so that its points sum to the Total tile beside it. An index
 orders a later key only within each group of its leading ones, so a date range over that compound index is
@@ -368,10 +368,10 @@ them — the address a re-registration inside the thirty days is meant to find, 
 `dependencies` demands presence and reads nothing, which is the only form the rule can take over a
 ciphertext; the 1000-character cap lives in the two Admin-tier mutations' GraphQL input validation and
 nowhere else. ⚠️ `deletedBy` **absent** means the holder closed their own account and **present** means an
-operator did — absence is the record, not a gap, so nothing may backfill it. ⚠️ `admin` gets none of the
-four: nobody has decided who suspends an operator. ⚠️ `collMod` never re-validates stored documents, so the
+admin did — absence is the record, not a gap, so nothing may backfill it. ⚠️ `admin` gets none of the
+four: nobody has decided who suspends an admin. ⚠️ `collMod` never re-validates stored documents, so the
 migration **counts suspended documents with no reason and refuses to run** if it finds any rather than
-inventing a sentence no operator wrote — lift and re-apply those suspensions through the Admin tier first.
+inventing a sentence no admin wrote — lift and re-apply those suspensions through the Admin tier first.
 
 ⚠️ **Anything that ever replaces this validator must restate *both* clauses.** A validator is set
 wholesale, never merged, so handing MongoDB the `$jsonSchema` half alone silently drops the `$expr` rule —
@@ -381,20 +381,20 @@ half of it.
 
 ### shopOwner
 
-- `notes` (top level, optional, **encrypted**) is what an **operator** wrote *about* an account, which is
+- `notes` (top level, optional, **encrypted**) is what an **admin** wrote *about* an account, which is
   why it is not inside `personalData` — that is what the shop owner declared about themselves. Nothing in
   the ShopOwner tier reads it: `marketplace-dev-authenticated-*` does not load this model at all, so the
   field cannot leak to the shop owner. ⚠️ It carries **no** `maxLength`, and cannot: it is `binData` here,
   so a bound would measure the blob. The cap holds in the Admin tier's GraphQL input validation alone.
 - `disabledReason` (top level, optional, **encrypted**) is the second field of that kind and `user` now has
-  one too — an operator's words about a named person, which the person never reads. Same missing
+  one too — an admin's words about a named person, which the person never reads. Same missing
   `maxLength` for the same reason, and the same rule: `dependencies` can demand it is *there* beside a
   `disabled`, and nothing anywhere can demand what it says.
 - `personalData.address.position` is the same GeoJSON point as `company.address.position`, in the same
   tuple form — but **optional**, with no `2dsphere` index. Deliberate: nothing queries shop owners by
   distance, and a coordinate cannot be derived from a street address without geocoding, so requiring it
   would put a geocoder in the path of registration. It fills in the first time an address is picked from
-  the operator app's autocomplete.
+  the admin app's autocomplete.
 
 ### Geo
 
