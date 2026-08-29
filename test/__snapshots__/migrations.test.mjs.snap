@@ -267,13 +267,6 @@ exports[`the full index set of every collection is frozen > user indexes 1`] = `
   },
   {
     "key": {
-      "deleted": 1
-    },
-    "name": "deleted_ttl",
-    "expireAfterSeconds": 2592000
-  },
-  {
-    "key": {
       "deleted": 1,
       "disabled": 1,
       "registeredAt": -1,
@@ -882,9 +875,25 @@ exports[`the full validator of every collection is frozen > shopOwner validator 
         "bsonType": "date",
         "description": "deletion date"
       },
+      "deletedBy": {
+        "bsonType": "objectId",
+        "description": "the admin who closed this account; absent means the holder closed it themselves"
+      },
       "disabled": {
         "bsonType": "bool",
         "description": "present and true: disabled, absent: login allowed"
+      },
+      "disabledBy": {
+        "bsonType": "objectId",
+        "description": "the admin who suspended this account"
+      },
+      "disabledReason": {
+        "bsonType": "binData",
+        "description": "why an admin suspended this account, encrypted, never visible to the account holder"
+      },
+      "scrubbedAt": {
+        "bsonType": "date",
+        "description": "when the retention sweep overwrote this account's personal data"
       },
       "waitApprov": {
         "bsonType": "bool",
@@ -948,7 +957,12 @@ exports[`the full validator of every collection is frozen > shopOwner validator 
         "bsonType": "int"
       }
     },
-    "additionalProperties": false
+    "additionalProperties": false,
+    "dependencies": {
+      "disabled": [
+        "disabledReason"
+      ]
+    }
   }
 }"
 `;
@@ -1121,9 +1135,25 @@ exports[`the full validator of every collection is frozen > user validator 1`] =
             "bsonType": "date",
             "description": "deletion date"
           },
+          "deletedBy": {
+            "bsonType": "objectId",
+            "description": "the admin who closed this account; absent means the holder closed it themselves"
+          },
           "disabled": {
             "bsonType": "bool",
             "description": "present and true: disabled, absent: login allowed"
+          },
+          "disabledBy": {
+            "bsonType": "objectId",
+            "description": "the admin who suspended this account"
+          },
+          "disabledReason": {
+            "bsonType": "binData",
+            "description": "why an admin suspended this account, encrypted, never visible to the account holder"
+          },
+          "scrubbedAt": {
+            "bsonType": "date",
+            "description": "when the retention sweep overwrote this account's personal data"
           },
           "resetPwd": {
             "bsonType": "object",
@@ -1179,7 +1209,12 @@ exports[`the full validator of every collection is frozen > user validator 1`] =
             "bsonType": "int"
           }
         },
-        "additionalProperties": false
+        "additionalProperties": false,
+        "dependencies": {
+          "disabled": [
+            "disabledReason"
+          ]
+        }
       }
     },
     {
