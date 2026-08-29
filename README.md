@@ -10,16 +10,20 @@ the three frontends beside this repo.
 
 Migrations run under [migrate-mongo](https://github.com/seppevs/migrate-mongo).
 
-**Nine migrations: six create a collection, one seeds demo data, and two alter `user` after the fact.**
+**Twelve migrations: six create a collection, one seeds demo data, and five alter an already-created one.**
 Each collection is still declared once, in its final shape — validator, `additionalProperties: false`,
 encryption and every index in the same call — so a reader of `migrations/` sees the shape the database
 actually has rather than the sum of a ladder.
 
-The two alters do not weaken that. `20260825000000` adds an index. `20260826000000` runs the repository's
-one `collMod`, capping `user.addresses` at six, and installs a shape `20260301000300` already carries:
-a database built from empty is capped before it runs, and the file exists only to move a database built
-before the cap onto it. There is still no widen → backfill → narrow ladder anywhere here, which is the
-thing worth not having.
+The five alters do not weaken that. Two add an index to `user` — `20260825000000` for the operator's
+customers table, `20260829000200` for the customers-over-time chart. `20260826000000` runs the
+repository's first `collMod`, capping `user.addresses` at six, and installs a shape `20260301000300`
+already carries: a database built from empty is capped before it runs, and the file exists only to move a
+database built before the cap onto it. `20260829000000` is the second `collMod` and the only migration
+that touches two collections, putting the four account-lifecycle paths on `user` and `shopOwner` at once.
+`20260829000100` drops `deleted_ttl`, which is the one kind of alter that cannot be a no-op on a replay —
+the index is created and retired seconds later, because that is what actually happened. There is still no
+widen → backfill → narrow ladder anywhere here, which is the thing worth not having.
 
 - **Rules for changing anything here** — [`CLAUDE.md`](./CLAUDE.md)
 - **Prerequisites, test suites, gates, hook mechanics** — [`REPO.md`](./REPO.md)

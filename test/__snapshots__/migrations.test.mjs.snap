@@ -273,6 +273,12 @@ exports[`the full index set of every collection is frozen > user indexes 1`] = `
       "_id": -1
     },
     "name": "tbl_active_registeredAt"
+  },
+  {
+    "key": {
+      "registeredAt": 1
+    },
+    "name": "registeredAt_series"
   }
 ]"
 `;
