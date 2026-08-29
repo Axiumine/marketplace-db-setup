@@ -33,17 +33,22 @@
 // drop and replay the whole database ONCE for the file, and getting the mapping wrong
 // would drop and re-migrate the database around every single test instead.
 //
-// ⚠️ **Every migration here creates a collection, with exactly two exceptions, and neither
-// exception is a ladder.** Each of the six collections is declared once, in its final shape,
-// validator and indexes together — there is no widen → backfill → narrow sequence anywhere in
-// this directory. The two alters both target `user`, which `20260301000300` had applied months
-// before either was written: `20260825000000` adds `tbl_active_registeredAt`, because the
-// operator's customers table (E19) needs something to page on, and `20260826000000` caps
-// `addresses` at six with a `collMod`, because an unbounded array under a 16 MB document limit
-// is a ceiling nobody chose.
+// ⚠️ **Every migration here creates a collection, with five exceptions, and not one of them is a
+// ladder.** Each of the six collections is declared once, in its final shape, validator and indexes
+// together — there is no widen → backfill → narrow sequence anywhere in this directory. Four of the
+// five alters target `user` alone, which `20260301000300` had applied months before any of them was
+// written: `20260825000000` adds `tbl_active_registeredAt`, because the operator's customers table
+// (E19) needs something to page on; `20260826000000` caps `addresses` at six with a `collMod`,
+// because an unbounded array under a 16 MB document limit is a ceiling nobody chose;
+// `20260829000100` drops `deleted_ttl`, because ADR-041 replaced a TTL removal with an overwrite in
+// place; and `20260829000200` adds `registeredAt_series`, because the customers chart the platform
+// owner asked for that day reads `registeredAt` with nothing else bound. The fifth,
+// `20260829000000`, is the only one that touches two collections — it puts the four lifecycle paths
+// on `user` and `shopOwner` in one pass, since a suspension names an actor and a reason on both
+// (ADR-044).
 //
-// Neither leaves this suite anything to walk through. The index one touches no validator and no
-// document. The `collMod` installs a shape that `lib/schemas/user.js` already carries, so on a
+// None of them leaves this suite anything to walk through. The two index ones touch no validator and
+// no document. The `collMod` installs a shape that `lib/schemas/user.js` already carries, so on a
 // database built from empty it re-installs what `20260301000300` created and the end state is
 // identical whether it ran or not — which is why the assertions below read the shape rather than
 // the transition, and why `test/migrationCalls.test.mjs` is where that migration's `up` and
@@ -143,11 +148,15 @@ const EXPECTED_INDEXES = {
   // drops it again in the same replay (ADR-041): a closed account keeps its document for ever and only
   // its personal data is overwritten, which is an outcome no TTL index can express. The end state is
   // what this list describes.
-  // 20260825000000 — `tbl_active_registeredAt`, added later and alone, for the operator's customers
-  // table. ⚠️ It is the ONLY one of `shopOwner`'s five that `user` gets a counterpart to: the other
-  // three tbl_active_* sort on names and a city, all of which are ciphertext here, and the chart's
-  // `registeredAt_series` has no customers-over-time chart to serve.
-  user: ['login.email_unique', 'tbl_active_registeredAt'],
+  // 20260825000000 — `tbl_active_registeredAt`, for the operator's customers table. 20260829000200 —
+  // `registeredAt_series`, for the customers-over-time chart, which is what E19 §6 question 2 became
+  // when the platform owner answered it on 2026-08-29. ⚠️ **Two of `shopOwner`'s five, and the three
+  // missing ones are missing for a reason that does not expire**: `tbl_active_lastName_firstName`,
+  // `tbl_active_firstName` and `tbl_active_city` all sort on fields that are RANDOM ciphertext here
+  // (ADR-029), so an index over them orders bytes rather than names. The chart index was in the same
+  // list until there was a chart, and it never belonged there — nothing about it was blocked, it had
+  // nothing to serve. That is the difference between the two paragraphs.
+  user: ['login.email_unique', 'tbl_active_registeredAt', 'registeredAt_series'],
   shopOwner: [
     // 20260301000100 — the login unique, one index per sort column the operator table exposes, and
     // the chart's unfiltered `registeredAt` range, which no tbl_active_* index can seek into because
@@ -1050,7 +1059,7 @@ if (!URL) {
       'an element needs an id, and its point stays optional');
   });
 
-  test('the customers table index is shopOwner\'s registeredAt index and nothing else', async () => {
+  test('the customers indexes are shopOwner\'s two registeredAt indexes and nothing else', async () => {
     // Added by 20260825000000, months after the collection, and the only index on `user` that
     // neither authenticates nor expires. Key ORDER is the assertion, as it is for `shopOwner`:
     // equality fields first (`deleted`/`disabled`, both `{ $exists: false }`-shaped), then the sort,
@@ -1072,9 +1081,28 @@ if (!URL) {
     for (const absent of ['tbl_active_lastName_firstName', 'tbl_active_firstName', 'tbl_active_city']) {
       assert.ok(!names.includes(absent), `${absent} must not exist on user`);
     }
-    // `registeredAt_series` is absent for a different and much duller reason: there is no
-    // customers-over-time chart. It is not a boundary, and adding one would need no decision.
-    assert.ok(!names.includes('registeredAt_series'), 'no chart index without a chart');
+    // ⚠️ `registeredAt_series` used to be asserted ABSENT here, "for a different and much duller
+    // reason: there is no customers-over-time chart". There is one as of 2026-08-29, so the
+    // assertion is inverted rather than deleted — the two paragraphs are not the same kind of
+    // absence, and a reader who finds only the paragraph above would take the ciphertext argument to
+    // cover this index too. It never did: `registeredAt` is clear, and the only thing this index
+    // ever waited on was the decision to draw the chart.
+    assert.ok(names.includes('registeredAt_series'), '20260829000200 must have added registeredAt_series');
+    assert.deepEqual(await indexKeys('user', 'registeredAt_series'), { registeredAt: 1 });
+    // Byte-identical to shopOwner's, like the table index above: one chart over two collections.
+    assert.deepEqual(await indexKeys('user', 'registeredAt_series'),
+      await indexKeys('shopOwner', 'registeredAt_series'));
+    // Single-field, and that is the whole point of it existing beside `tbl_active_registeredAt`: the
+    // chart bounds neither `deleted` nor `disabled`, so a compound index leading with them can only
+    // be scanned end to end for a range on a later key.
+    assert.equal(Object.keys(await indexKeys('user', 'registeredAt_series')).length, 1,
+      'registeredAt_series must stay single-field or it stops serving the chart');
+    const chart = (await db.collection('user').indexes()).find((i) => i.name === 'registeredAt_series');
+    // Not unique — two customers may register in the same millisecond — and not partial: the chart
+    // counts every customer ever registered, so its points sum to the Total tile beside it.
+    assert.equal(chart.unique, undefined, 'the chart index must not be unique');
+    assert.equal(chart.partialFilterExpression, undefined, 'the chart counts closed accounts too');
+    assert.equal(chart.expireAfterSeconds, undefined, 'nothing on this platform expires anything');
 
     // Sort directions uniform across the sort components, so the one index serves newest-first and
     // oldest-first alike; `deleted`/`disabled` are matched rather than sorted and are excluded.

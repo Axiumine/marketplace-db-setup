@@ -14,12 +14,14 @@ One of fifteen sub-repos.
 | why a validator shape is the way it is | [`lib/schemas/README.md`](./lib/schemas/README.md) |
 | anything cross-repo | parent `CLAUDE.md` |
 
-**Eleven migrations: six create a collection, one seeds demo data, four alter.** Each collection is
+**Twelve migrations: six create a collection, one seeds demo data, five alter.** Each collection is
 declared once, in its final shape — validator, `additionalProperties: false`, encryption and every index
-in one call. The four alters are `20260825000000` (adds one index to `user`), `20260826000000` (a
+in one call. The five alters are `20260825000000` (adds one index to `user`), `20260826000000` (a
 `collMod`, capping `user.addresses` at six on databases built before the cap), `20260829000000` (a
-`collMod` on **both** `user` and `shopOwner`, the four account-lifecycle paths and the reason rule) and
-`20260829000100` (drops `deleted_ttl` from `user`). No widen → backfill → narrow ladder anywhere.
+`collMod` on **both** `user` and `shopOwner`, the four account-lifecycle paths and the reason rule),
+`20260829000100` (drops `deleted_ttl` from `user`) and `20260829000200` (adds `registeredAt_series` to
+`user`, for the customers-over-time chart the platform owner asked for that day). No widen → backfill →
+narrow ladder anywhere.
 
 Six collections — `admin`, `shopOwner`, `company`, `user`, `itemCategory`, `item`:
 
@@ -127,11 +129,12 @@ reads as undefined and the first call dies with `TypeError: mm.config.set is not
 
 ## Authoring migrations — rules
 
-- **A migration creates a collection unless it cannot.** Six creates, one seed, four alters. A collection
+- **A migration creates a collection unless it cannot.** Six creates, one seed, five alters. A collection
   is declared once, in its final shape, so `migrations/` reads as the schema the database has rather than
   as the sum of a ladder — and a reader never has to replay six files in their head to learn what a field
   is today. An alter is what is left when the create has already been applied, and there are three kinds:
-  it adds something the create never had (`20260825000000`, an index; `20260829000000`, four paths and a
+  it adds something the create never had (`20260825000000` and `20260829000200`, an index each;
+  `20260829000000`, four paths and a
   `dependencies` clause), it hands an existing database a shape the create now carries and it does not
   (`20260826000000`, `maxItems` on `user.addresses`), or it **removes** something the create built
   (`20260829000100`, `deleted_ttl`). In the second case **the create migration stays the statement of
@@ -333,8 +336,18 @@ cannot be shared** — here, `funUserAddressAdd` in `marketplace-dev-user-authen
 `AddressList.tsx` in `marketplace-user`. This one is the rule; the other two exist so the customer gets
 a sentence instead of a failed write.
 
-No `2dsphere` over `addresses.position` — nothing queries customers by distance. Two indexes: the shared
-`login.email_unique` and `tbl_active_registeredAt` from `20260825000000`.
+No `2dsphere` over `addresses.position` — nothing queries customers by distance. Three indexes: the shared
+`login.email_unique`, `tbl_active_registeredAt` from `20260825000000` and `registeredAt_series` from
+`20260829000200`.
+
+⚠️ **The last two are not one index doing two jobs, and the second cannot be folded into the first.**
+`tbl_active_registeredAt` leads with `deleted` and `disabled` because the operator's customers table
+filters on both; the customers chart (E19 §6 question 2, answered 2026-08-29) bounds **neither**, since it
+counts every customer who ever registered so that its points sum to the Total tile beside it. An index
+orders a later key only within each group of its leading ones, so a date range over that compound index is
+a full scan of it — hence `{ registeredAt: 1 }` on its own, byte-identical to the `shopOwner` index of the
+same name. It is not unique (two people may register in the same millisecond) and not partial (a closed
+account is still someone who registered).
 
 ⚠️ **There is no TTL index on this platform and `deleted` is not a destruction clock.** `deleted_ttl` was
 one — `{ deleted: 1 }`, `expireAfterSeconds` 2592000 — and it was what made `userDel` an erasure rather than

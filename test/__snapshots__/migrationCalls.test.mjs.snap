@@ -3151,3 +3151,34 @@ exports[`20260829000100-user-retire-deleted-ttl.js — up() and down() issue exa
   "logged": []
 }"
 `;
+
+exports[`20260829000200-user-add-registered-at-series-index.js — up() and down() issue exactly these driver calls > down 1`] = `
+"{
+  "calls": [
+    {
+      "call": "dropIndex",
+      "name": "user",
+      "indexName": "registeredAt_series"
+    }
+  ],
+  "logged": []
+}"
+`;
+
+exports[`20260829000200-user-add-registered-at-series-index.js — up() and down() issue exactly these driver calls > up 1`] = `
+"{
+  "calls": [
+    {
+      "call": "createIndex",
+      "name": "user",
+      "key": {
+        "registeredAt": 1
+      },
+      "options": {
+        "name": "registeredAt_series"
+      }
+    }
+  ],
+  "logged": []
+}"
+`;
