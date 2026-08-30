@@ -5,7 +5,7 @@
 // **Why the cap exists at all.** `addresses` was unbounded, and the only ceiling under it was BSON's
 // 16 MB document limit: an address is a handful of short ciphertexts, so a scripted client could have
 // pushed tens of thousands of them into one customer's document before anything refused. Every read of
-// that account — `me`, and the operator's customers table — loads the whole document, so the cost is
+// that account — `me`, and the admin's customers table — loads the whole document, so the cost is
 // not the storage, it is that one account can make its own reads slow and nobody else's. Six is a
 // number for a person: home, work, and four more.
 //
@@ -30,7 +30,7 @@
 //
 // ⚠️ **`collMod` does not re-validate what is already stored.** A customer holding seven addresses when
 // this runs stays valid where it sits and becomes unwritable on its next update — including an update
-// that has nothing to do with addresses, such as the operator disabling the account. It was checked
+// that has nothing to do with addresses, such as the admin disabling the account. It was checked
 // before this was written: `user` held no document with more than six addresses. **Check again before
 // running this against any database it has not yet been applied to**, and if one exists, trim it first;
 // the alternative is an account nobody can edit and a 500 landing on whoever tries.

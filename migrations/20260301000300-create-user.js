@@ -29,7 +29,7 @@
 // ⚠️ **Every personal field here is encrypted, with no exception for query support** — the whole of
 // `personalData` and the whole of every address element, `city` included, where `shopOwner` has to
 // leave three fields in the clear. This collection can afford it because nothing sorts, searches or
-// paginates customers: a customer reads their own document by `_id`, and there is no operator table
+// paginates customers: a customer reads their own document by `_id`, and there is no admin table
 // over it. The two fields left visible — `addresses.[]._id` and `defaultAddress` — are the two sides
 // of the `$expr` comparison above, and encrypting either would make the rule unsatisfiable and every
 // write to the collection refused.
@@ -37,7 +37,7 @@
 // **No `2dsphere` on `addresses.position`.** Nothing queries customers by distance; the geo query this
 // platform needs is "shops near me", which is an index on `company.address.position`.
 //
-// **No `waitApprov`.** A shop owner is approved by an operator before the account works; a customer
+// **No `waitApprov`.** A shop owner is approved by an admin before the account works; a customer
 // self-serves. The only gate between registering and logging in is the email confirmation, which
 // `loginUser` checks against `emailVerify.valid`.
 //
@@ -46,7 +46,7 @@
 // other two collections have, and it is the credential the login form matches on. The second is
 // `deleted_ttl`, and it belongs to this collection alone: thirty days after `funUserDel` stamps
 // `deleted`, the database removes the document. Without it the stamp erases nothing and the address
-// stays occupied for ever — see `INDEXES_USER` for why the TTL cannot ride on the operator table's
+// stays occupied for ever — see `INDEXES_USER` for why the TTL cannot ride on the admin table's
 // compound index and why it is not put on the shared constant.
 //
 // ⚠️ **This file was EDITED after it had been applied, on 2026-08-26, which the rest of this repo

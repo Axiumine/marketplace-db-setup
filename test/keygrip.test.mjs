@@ -54,7 +54,7 @@ test('the key names carry the shared prefix and nothing else', () => {
   assert.equal(keygripHoldersKey(ENV), 'marketplaceDev:keygrip:holders');
 });
 
-// The fingerprint is compared across repos by eye and by the operator screen, so what is asserted is the
+// The fingerprint is compared across repos by eye and by the admin screen, so what is asserted is the
 // exact string, computed here the long way round.
 test('the fingerprint is 12 hex characters of sha256 over the ids, not the material', () => {
   const keys = [
@@ -195,7 +195,7 @@ test('the pair is adopted through the seed itself, and reported as adopted', asy
   );
 });
 
-// The KEK is read only once the write is going to happen, so an operator who runs the seed twice on a
+// The KEK is read only once the write is going to happen, so an admin who runs the seed twice on a
 // machine that already has a record is told about the record rather than about a missing variable.
 test('a bad KEK stops a write but not the report on an existing record', async () => {
   await assert.rejects(seedKeygripRecord(fakeStore(), { env: { REDIS_KEY: 'marketplaceDev:' }, force: false, now: NOW }), /decodes to 0/);

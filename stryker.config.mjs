@@ -58,7 +58,7 @@ export default {
 		 */
 		'!setup/**',
 		/*
-		 * scripts/seedKeygrip.js is the operator entry point for ADR-034, and it is out of scope the
+		 * scripts/seedKeygrip.js is the admin entry point for ADR-034, and it is out of scope the
 		 * same way an `index.mts` is in the services: everything it decides lives in lib/keygrip.js,
 		 * which IS mutated and is unit-tested against a fake hash. What is left here is a Redis
 		 * connection, one argv flag and four console lines — killing a mutant in any of them would

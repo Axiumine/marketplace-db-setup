@@ -4,7 +4,7 @@
 // The shape and every argument behind it are at the head of `lib/schemas/shopOwner.js`, including the
 // one that matters most: **`personalData.firstName`, `personalData.lastName` and
 // `personalData.address.city` are the only personal fields on this platform left in the clear**, and
-// the four `tbl_active_*` indexes below are why. Encrypting them would not make the operator table
+// the four `tbl_active_*` indexes below are why. Encrypting them would not make the admin table
 // slow, it would make it wrong with no error.
 //
 // ## The indexes

@@ -37,7 +37,7 @@
 // ladder.** Each of the six collections is declared once, in its final shape, validator and indexes
 // together — there is no widen → backfill → narrow sequence anywhere in this directory. Four of the
 // five alters target `user` alone, which `20260301000300` had applied months before any of them was
-// written: `20260825000000` adds `tbl_active_registeredAt`, because the operator's customers table
+// written: `20260825000000` adds `tbl_active_registeredAt`, because the admin's customers table
 // (E19) needs something to page on; `20260826000000` caps `addresses` at six with a `collMod`,
 // because an unbounded array under a 16 MB document limit is a ceiling nobody chose;
 // `20260829000100` drops `deleted_ttl`, because ADR-041 replaced a TTL removal with an overwrite in
@@ -148,7 +148,7 @@ const EXPECTED_INDEXES = {
   // drops it again in the same replay (ADR-041): a closed account keeps its document for ever and only
   // its personal data is overwritten, which is an outcome no TTL index can express. The end state is
   // what this list describes.
-  // 20260825000000 — `tbl_active_registeredAt`, for the operator's customers table. 20260829000200 —
+  // 20260825000000 — `tbl_active_registeredAt`, for the admin's customers table. 20260829000200 —
   // `registeredAt_series`, for the customers-over-time chart, which is what E19 §6 question 2 became
   // when the platform owner answered it on 2026-08-29. ⚠️ **Two of `shopOwner`'s five, and the three
   // missing ones are missing for a reason that does not expire**: `tbl_active_lastName_firstName`,
@@ -158,7 +158,7 @@ const EXPECTED_INDEXES = {
   // nothing to serve. That is the difference between the two paragraphs.
   user: ['login.email_unique', 'tbl_active_registeredAt', 'registeredAt_series'],
   shopOwner: [
-    // 20260301000100 — the login unique, one index per sort column the operator table exposes, and
+    // 20260301000100 — the login unique, one index per sort column the admin table exposes, and
     // the chart's unfiltered `registeredAt` range, which no tbl_active_* index can seek into because
     // they all lead with deleted/disabled and the chart bounds neither.
     'login.email_unique',
@@ -356,9 +356,9 @@ if (!URL) {
       personalData: {
         // ⚠️ `firstName`, `lastName` and `address.city` stay in the CLEAR, and are the only personal
         // fields on this collection that do. They are the sort keys of tbl_active_lastName_firstName,
-        // tbl_active_firstName and tbl_active_city and the targets of the operator table's `/^term/i`
+        // tbl_active_firstName and tbl_active_city and the targets of the admin table's `/^term/i`
         // prefix search, and no CSFLE algorithm preserves an ordering or a prefix — deterministic
-        // preserves equality and nothing else. Encrypting them would not slow the operator table
+        // preserves equality and nothing else. Encrypting them would not slow the admin table
         // down, it would silently falsify it. See lib/schemas/shopOwner.js.
         firstName: 'M', lastName: 'R',
         birth: { date: cipher() },
@@ -575,7 +575,7 @@ if (!URL) {
 
   test('the shopOwner address point is optional, and opaque', async () => {
     // Absent is valid, and deliberately: a coordinate arrives only when the address is picked from
-    // the operator app's autocomplete, and an address typed by hand simply has none. Requiring it
+    // the admin app's autocomplete, and an address typed by hand simply has none. Requiring it
     // would make the field unwritable from every other path.
     await accepts('shopOwner', validShopOwner());
 
@@ -606,7 +606,7 @@ if (!URL) {
       login: { email: cipher(), password: 'x'.repeat(60) },
       emailVerify: { hash: 'x'.repeat(50), requestTimes: new Int32(1), dateLastReq: new Date() },
       registeredAt: new Date(),
-      // Set by that mutation and by no other creation path: an account an operator adds by hand is
+      // Set by that mutation and by no other creation path: an account an admin adds by hand is
       // approved by the act of adding it. Never `false` anywhere — approval `$unset`s the field.
       waitApprov: true,
     });
@@ -620,18 +620,18 @@ if (!URL) {
     await rejects('shopOwner', halfFilled);
   });
 
-  test('the shopOwner operator note is optional, top level, and opaque', async () => {
+  test('the shopOwner admin note is optional, top level, and opaque', async () => {
     const { $jsonSchema } = (await collInfo('shopOwner')).options.validator;
     // Top level, not inside personalData: `personalData` is what the shop owner declared about
-    // themselves, the note is what an operator wrote about them — and nothing in the ShopOwner tier
+    // themselves, the note is what an admin wrote about them — and nothing in the ShopOwner tier
     // loads this model, so the field cannot leak to its subject.
-    assert.equal($jsonSchema.properties.notes.bsonType, 'binData', 'the operator note is ciphertext');
+    assert.equal($jsonSchema.properties.notes.bsonType, 'binData', 'the admin note is ciphertext');
     assert.equal($jsonSchema.required.includes('notes'), false, 'and not required');
     assert.equal($jsonSchema.properties.personalData.properties.notes, undefined, 'and not under personalData');
 
     const withNotes = (notes) => ({ ...validShopOwner(), notes });
     await accepts('shopOwner', withNotes(cipher()));
-    // Optional: nothing obliges an operator to have written anything about an account.
+    // Optional: nothing obliges an admin to have written anything about an account.
     await accepts('shopOwner', validShopOwner());
     // Under `additionalProperties: false` a value of the wrong type is refused rather than coerced,
     // whether it is a string or a number.
@@ -640,7 +640,7 @@ if (!URL) {
   });
 
   test('the table indexes lead with the filter fields and end on _id', async () => {
-    // These four back the paginated operator table, and their KEYS are what matters rather than
+    // These four back the paginated admin table, and their KEYS are what matters rather than
     // their existence: a sorted+skipped query whose sort keys are not a prefix of some index falls
     // back to a blocking in-memory sort, which MongoDB caps at 32 MB and then fails outright. That
     // failure is data-dependent — it appears the day the collection outgrows the cap, not the day the
@@ -1037,7 +1037,7 @@ if (!URL) {
     assert.equal($jsonSchema.properties.addresses.maxItems, 6, 'and a bounded one');
     // 3. `defaultAddress` has no counterpart at all — see the `$expr` test below.
     assert.equal($jsonSchema.properties.defaultAddress.bsonType, 'objectId', 'the default is a pointer');
-    // 4. No `waitApprov`. Customers self-serve: there is no operator approval gate between
+    // 4. No `waitApprov`. Customers self-serve: there is no admin approval gate between
     //    registering and using the account, only the email confirmation.
     assert.equal($jsonSchema.properties.waitApprov, undefined, 'no approval gate on a customer');
 
@@ -1068,7 +1068,7 @@ if (!URL) {
     assert.deepEqual(await indexKeys('user', 'tbl_active_registeredAt'), {
       deleted: 1, disabled: 1, registeredAt: -1, _id: -1,
     });
-    // Byte-identical to shopOwner's, and deliberately so: the two operator tables page the same way.
+    // Byte-identical to shopOwner's, and deliberately so: the two admin tables page the same way.
     assert.deepEqual(await indexKeys('user', 'tbl_active_registeredAt'),
       await indexKeys('shopOwner', 'tbl_active_registeredAt'));
 
@@ -1152,7 +1152,7 @@ if (!URL) {
   test('user and shopOwner carry the four lifecycle paths, in these types and no others', async () => {
     // The four ADR-044 paths, identical on both collections because role here is which collection you
     // authenticate against rather than a field. `admin` deliberately has none of them: nobody has
-    // decided who suspends an operator or what a retention sweep owes one.
+    // decided who suspends an admin or what a retention sweep owes one.
     for (const [coll, valid] of [['user', validUser], ['shopOwner', validShopOwner]]) {
       await accepts(coll, { ...valid(), deleted: new Date(), deletedBy: new ObjectId(), scrubbedAt: new Date() });
       await accepts(coll, { ...valid(), disabled: true, disabledBy: new ObjectId(), disabledReason: cipher() });
@@ -1163,7 +1163,7 @@ if (!URL) {
       await rejects(coll, { ...valid(), disabled: true, disabledBy: String(new ObjectId()), disabledReason: cipher() });
 
       // ⚠️ The reason is ciphertext at rest. A service that wrote it without encrypting would put an
-      // operator's sentence about a named person into the database in the clear, and this is the only
+      // admin's sentence about a named person into the database in the clear, and this is the only
       // place that is caught — the field is `binData` here and a `string` nowhere.
       await rejects(coll, { ...valid(), disabled: true, disabledReason: 'spamming customers' });
 
@@ -1208,10 +1208,10 @@ if (!URL) {
     // ⚠️ `collMod` NEVER re-validates what is already stored. A document suspended before this
     // migration cannot carry a `disabledReason` — the path did not exist — so it stays valid where it
     // sits and becomes unwritable on its next update, INCLUDING the update that lifts the suspension.
-    // The symptom would be a 500 on an operator action weeks later with nothing pointing back here.
+    // The symptom would be a 500 on an admin action weeks later with nothing pointing back here.
     //
     // The migration counts those documents first and refuses. It does not backfill: a reason is an
-    // operator's words about a named person, and a database should not vouch for a sentence nobody
+    // admin's words about a named person, and a database should not vouch for a sentence nobody
     // said. Lifting and re-applying the suspension through the Admin tier produces a true one.
     //
     // ⚠️ `bypassDocumentValidation` is how the fixture gets in, and that is the point rather than a
@@ -1539,7 +1539,7 @@ if (!URL) {
       // A bcrypt hash is not personal data and is never a query filter — the application compares it.
       // Encrypting it would buy nothing and cost the login path a decrypt.
       admin: ['login.password', 'resetPwd.resetHash'],
-      // ⚠️ The three sort keys of the operator table. `tbl_active_lastName_firstName`,
+      // ⚠️ The three sort keys of the admin table. `tbl_active_lastName_firstName`,
       // `tbl_active_firstName` and `tbl_active_city` sort on them and the table's search matches
       // `/^term/i` against them. Deterministic CSFLE preserves equality and NOTHING else — no
       // ordering, no prefix — so encrypting these would not slow the table down, it would silently
@@ -1617,7 +1617,7 @@ if (!URL) {
     try {
       await seed.up(db, client);
 
-      // The operator: both names as well as the login address, because nothing sorts or searches this
+      // The admin: both names as well as the login address, because nothing sorts or searches this
       // collection. The bcrypt hash stays readable — it is not personal data, and it is compared by
       // the application rather than by a query.
       const admin = await db.collection('admin').findOne({});
@@ -1638,12 +1638,12 @@ if (!URL) {
       // path the collection can carry; the document carries some of them. A plan applied blindly
       // would write four `null`s into fields typed `binData` and be refused by the validator — so
       // "encrypt what is there" is the behaviour, and this is where it is pinned.
-      assert.equal('notes' in owner, false, 'no operator note was written, so none was encrypted');
+      assert.equal('notes' in owner, false, 'no admin note was written, so none was encrypted');
       assert.equal('emailVerify' in owner, false, 'and no pending email change');
       assert.equal('landline' in owner.personalData.contacts, false, 'and no landline');
       assert.equal('position' in owner.personalData.address, false, 'and no coordinate — the seed types the address');
       // Nothing outside the plan moved. The three sort keys above all: a conversion that took them
-      // would leave the operator table sorting on ciphertext, which fails silently rather than loudly.
+      // would leave the admin table sorting on ciphertext, which fails silently rather than loudly.
       assert.equal(owner.personalData.firstName, 'John', 'the given name is in the clear');
       assert.equal(owner.personalData.lastName, 'Carter', 'the family name is in the clear');
       assert.equal(owner.personalData.address.city, 'Boston', 'and so is the city');

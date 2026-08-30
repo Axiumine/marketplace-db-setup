@@ -101,7 +101,7 @@ test('the database name falls back to the authSource when MONGO_DEV_DB is unset'
   assert.equal(config.mongodb.databaseName, 'dbFakeAuth');
 });
 
-test('a missing piece is reported under the variable name the operator has to set', () => {
+test('a missing piece is reported under the variable name the admin has to set', () => {
   // The whole point of the `names` argument buildUrl() passes: 'Missing connString in .env' would
   // send someone looking for a variable that does not exist in any .env on this platform.
   assert.throws(() => loadWith({ ...FAKE, MONGO_DEV_CONN_STRING: '' }), /Missing MONGO_DEV_CONN_STRING in \.env/);

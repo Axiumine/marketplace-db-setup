@@ -1,11 +1,11 @@
-// The `admin` collection — the platform operator, and the first of the three things you can
+// The `admin` collection — the platform admin, and the first of the three things you can
 // authenticate against.
 //
 // Role on this platform is not a field: it is which collection the login form matched in (ADR-002).
 // So this collection exists rather than a `role: 'admin'` on `shopOwner`, and it carries the same
 // `LOGIN` and `RESET_PWD` sub-documents and the same `deleted`/`disabled` gates as the other two.
-// What is left is the whole difference between an operator and a shop owner: an admin has a name and
-// nothing else — no `waitApprov` (nobody approves an operator), no `emailVerify` (the account is
+// What is left is the whole difference between an admin and a shop owner: an admin has a name and
+// nothing else — no `waitApprov` (nobody approves an admin), no `emailVerify` (the account is
 // created by hand), no `registeredAt`.
 //
 // ⚠️ **`login.email` and both names are `binData` from this line onwards** (ADR-029). MongoDB
@@ -16,8 +16,8 @@
 // cannot simply `insertOne` a plaintext document; see `20260301000600-seed-demo.js`.
 //
 // Both names are encrypted here where `shopOwner`'s are not, and the asymmetry is argued in
-// `lib/schemas/shopOwner.js`: nothing sorts, searches or paginates operators, so encryption costs
-// this collection nothing and would cost that one its operator table.
+// `lib/schemas/shopOwner.js`: nothing sorts, searches or paginates admins, so encryption costs
+// this collection nothing and would cost that one its admin table.
 //
 // The single index is `login.email_unique` from `lib/schemas/account.js` — one account per address,
 // the same rule all three collections have. It survives the encryption only because `login.email` is

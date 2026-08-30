@@ -14,7 +14,7 @@
 // does not, which is not a state anybody decided on — it is just a half-applied changelog.
 //
 // ⚠️ **`admin` deliberately gets none of this.** It carries `deleted` and `disabled` like the other two,
-// so the paths would fit, but nobody has said who suspends an operator or what a retention sweep should
+// so the paths would fit, but nobody has said who suspends an admin or what a retention sweep should
 // do to one. Adding the fields "for symmetry" would invent that answer in a schema.
 //
 // ⚠️ **`collMod` replaces a validator wholesale — it never merges.** `user`'s validator is an `$and`
@@ -27,15 +27,15 @@
 // existing documents can fail.** `dependencies: { disabled: ['disabledReason'] }` demands a reason
 // beside a `disabled: true`, and no document written before today can have one — the path did not exist.
 // Such a document stays valid where it sits and becomes UNWRITABLE on its next update, including an
-// update with nothing to do with suspension, such as the operator lifting it. `refuseIfStranded` below
+// update with nothing to do with suspension, such as the admin lifting it. `refuseIfStranded` below
 // is why that cannot happen quietly.
 //
 // ⚠️ **The check refuses; it does not backfill, and that is the decision rather than the easy way out.**
-// A backfill would have to write a reason no operator wrote into a field whose whole content is an
-// operator's words about a named person — encrypted, and read back by the Admin tier as if somebody had
+// A backfill would have to write a reason no admin wrote into a field whose whole content is an
+// admin's words about a named person — encrypted, and read back by the Admin tier as if somebody had
 // typed it. A database should not vouch for a sentence nobody said. Refusing hands the choice to whoever
 // runs the migration: lift the suspension and re-apply it through `userUpdateStatus` /
-// `shopOwnerUpdateStatus`, which now demand a reason, or clear it. Both are one operator action, and
+// `shopOwnerUpdateStatus`, which now demand a reason, or clear it. Both are one admin action, and
 // both produce a true record.
 //
 // `down` rebuilds today's shape and removes exactly the keywords this migration added, rather than
@@ -86,7 +86,7 @@ const setValidator = async (db, collection, validator) => {
  *
  * The count is of documents that are suspended and carry no reason, which before this migration is
  * every suspended document there is. One is enough to stop: the failure it prevents is an account that
- * no operator can edit and a 500 landing on whoever tries, weeks later, with nothing pointing back here.
+ * no admin can edit and a 500 landing on whoever tries, weeks later, with nothing pointing back here.
  */
 const refuseIfStranded = async (db, collection) => {
   const stranded = await db.collection(collection).countDocuments({ disabled: true, disabledReason: { $exists: false } });

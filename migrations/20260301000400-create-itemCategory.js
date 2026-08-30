@@ -25,7 +25,7 @@
 // rather than an in-memory sort — which matters less at this cardinality than at `item`'s, but costs
 // nothing and means the listing does not degrade if the taxonomy grows.
 //
-// There is no index on `deleted`. The collection is small by construction — an operator curates it by
+// There is no index on `deleted`. The collection is small by construction — an admin curates it by
 // hand — so the filter is applied to an already-indexed result rather than driving the plan.
 
 const { migrationCreation } = require('../lib/schemas/collection');

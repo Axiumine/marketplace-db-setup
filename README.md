@@ -15,7 +15,7 @@ Each collection is still declared once, in its final shape — validator, `addit
 encryption and every index in the same call — so a reader of `migrations/` sees the shape the database
 actually has rather than the sum of a ladder.
 
-The five alters do not weaken that. Two add an index to `user` — `20260825000000` for the operator's
+The five alters do not weaken that. Two add an index to `user` — `20260825000000` for the admin's
 customers table, `20260829000200` for the customers-over-time chart. `20260826000000` runs the
 repository's first `collMod`, capping `user.addresses` at six, and installs a shape `20260301000300`
 already carries: a database built from empty is capped before it runs, and the file exists only to move a
@@ -38,7 +38,7 @@ shopOwner ──idShopOwner──> company ──idCompany──> item ──idC
 admin, user — outside the chain
 ```
 
-`shopOwner` is the business owner who runs shops on the platform · `admin` is the platform operator ·
+`shopOwner` is the business owner who runs shops on the platform · `admin` is the platform admin ·
 `company` is the registered company a shopOwner owns, **and the shop itself** · `user` is the end customer,
 the person who places orders · `item` is one thing a company sells · `itemCategory` is the platform-wide
 taxonomy items are filed under, two levels deep.
@@ -93,7 +93,7 @@ indexes and the `en-GB` locale the frontends format with are market choices rath
 
 One file, `20260301000600-seed-demo.js`, **gated on `SEED_DEMO=true`** and a no-op otherwise, so it is safe
 to apply in every environment. It writes one `admin`, one `shopOwner` and one `company` — the tenant
-skeleton: an operator, a shop owner, and the company that shop owner registered. Fixed `_id` literals, so
+skeleton: an admin, a shop owner, and the company that shop owner registered. Fixed `_id` literals, so
 `down` deletes exactly what `up` wrote, in the reverse order.
 
 The three inserts are one file rather than three because they are one fact: the company points its
