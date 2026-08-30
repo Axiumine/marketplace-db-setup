@@ -2,10 +2,10 @@
 // `shopOwner`'s five. It adds one: `registeredAt_series`, `{ registeredAt: 1 }`, the exact shape and
 // name `20260301000100` gave `shopOwner`.
 //
-// It exists because the platform owner answered `phase5/epics/E19.md` §6 question 2 on 2026-08-29 —
-// build the customer counterparts of `shopOwnersStats` and `shopOwnersPerPeriod`. The question was
-// never blocked on anything: both numbers are counted off fields that were never encrypted, so
-// ADR-029 has nothing to say about either, and the only thing missing was the decision and this index.
+// It exists because the platform owner decided on 2026-08-29 to build the customer counterparts of
+// `shopOwnersStats` and `shopOwnersPerPeriod`. The decision was never blocked on anything: both numbers
+// are counted off fields that were never encrypted, so ADR-029 has nothing to say about either, and the
+// only thing missing was the decision and this index.
 //
 // A separate file rather than a line in `20260301000300-create-user.js`, for the reason
 // `20260825000000` gives at length: that migration has been applied, an applied migration is
