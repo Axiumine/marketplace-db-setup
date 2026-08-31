@@ -1,7 +1,7 @@
 // **The first migration in this repo that alters a collection instead of creating one**, and the
 // header of `test/migrations.test.mjs` used to say none did. It adds one index to `user`:
-// `tbl_active_registeredAt`, the only index the admin's customers table (E19-S02,
-// `usersActiveTbl`) can page on.
+// `tbl_active_registeredAt`, the only index the admin's customers table `usersActiveTbl` can
+// page on.
 //
 // It is a separate file rather than a fifth line in `20260301000300-create-user.js` because that
 // migration has been applied and an applied migration is immutable — editing it changes what a

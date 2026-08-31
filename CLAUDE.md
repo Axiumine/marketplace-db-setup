@@ -75,7 +75,7 @@ names the tests that should have failed, and it costs nobody the machine.
 | `scripts/seedKeygrip.js` | `yarn seed:keygrip` — the admin entry point for the above: connection, the `--force` flag, and what is printed (version and fingerprint, never a key). ⚠️ **Never wire it into a service's boot.** |
 | `test/` | Six vitest suites — the migration replay plus five unit suites. Layout and traps: [`REPO.md`](./REPO.md). |
 | `vitest.config.mjs` · `vitest.mutation.config.mjs` · `stryker.config.mjs` | Suite configs. Coverage gated at 100% on every metric; Stryker `thresholds.break: 100`, `concurrency: 1` (one real database). |
-| `qodana.yaml` / `qodana.sh` | Scan config and runner. Critical 0 / high 0, coverage 100 total / 100 fresh, license check. Its vulnerable-dependency inspection is an offline heuristic that reports nothing — advisories are the trivy gate's job (E18-S11). |
+| `qodana.yaml` / `qodana.sh` | Scan config and runner. Critical 0 / high 0, coverage 100 total / 100 fresh, license check. Its vulnerable-dependency inspection is an offline heuristic that reports nothing — advisories are the trivy gate's job. |
 | `.githooks/pre-commit` · `pre-push` | Gates. What runs when, and why: [`REPO.md`](./REPO.md). |
 | `env` | Committed template for `.env`. `.env` itself is gitignored — dev Mongo credentials. |
 | `setup/mongodb.js` · `setup/redis.txt` | Manual one-off runbooks (DB users, dump/restore, Redis ACL). **Gitignored** — they hold real users, passwords and internal hostnames. A clone does not get them. |
@@ -341,8 +341,8 @@ No `2dsphere` over `addresses.position` — nothing queries customers by distanc
 `20260829000200`.
 
 ⚠️ **The last two are not one index doing two jobs, and the second cannot be folded into the first.**
-`tbl_active_registeredAt` leads with `deleted` and `disabled` because the admin's customers table
-filters on both; the customers chart (E19 §6 question 2, answered 2026-08-29) bounds **neither**, since it
+`tbl_active_registeredAt` leads with `deleted` and `disabled` because the admin's customers table filters
+on both; the customers chart the platform owner asked for on 2026-08-29 bounds **neither**, since it
 counts every customer who ever registered so that its points sum to the Total tile beside it. An index
 orders a later key only within each group of its leading ones, so a date range over that compound index is
 a full scan of it — hence `{ registeredAt: 1 }` on its own, byte-identical to the `shopOwner` index of the

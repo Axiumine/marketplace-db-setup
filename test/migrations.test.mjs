@@ -38,7 +38,7 @@
 // together — there is no widen → backfill → narrow sequence anywhere in this directory. Four of the
 // five alters target `user` alone, which `20260301000300` had applied months before any of them was
 // written: `20260825000000` adds `tbl_active_registeredAt`, because the admin's customers table
-// (E19) needs something to page on; `20260826000000` caps `addresses` at six with a `collMod`,
+// needs something to page on; `20260826000000` caps `addresses` at six with a `collMod`,
 // because an unbounded array under a 16 MB document limit is a ceiling nobody chose;
 // `20260829000100` drops `deleted_ttl`, because ADR-041 replaced a TTL removal with an overwrite in
 // place; and `20260829000200` adds `registeredAt_series`, because the customers chart the platform
@@ -149,13 +149,13 @@ const EXPECTED_INDEXES = {
   // its personal data is overwritten, which is an outcome no TTL index can express. The end state is
   // what this list describes.
   // 20260825000000 — `tbl_active_registeredAt`, for the admin's customers table. 20260829000200 —
-  // `registeredAt_series`, for the customers-over-time chart, which is what E19 §6 question 2 became
-  // when the platform owner answered it on 2026-08-29. ⚠️ **Two of `shopOwner`'s five, and the three
-  // missing ones are missing for a reason that does not expire**: `tbl_active_lastName_firstName`,
-  // `tbl_active_firstName` and `tbl_active_city` all sort on fields that are RANDOM ciphertext here
-  // (ADR-029), so an index over them orders bytes rather than names. The chart index was in the same
-  // list until there was a chart, and it never belonged there — nothing about it was blocked, it had
-  // nothing to serve. That is the difference between the two paragraphs.
+  // `registeredAt_series`, for the customers-over-time chart, which the platform owner asked for on
+  // 2026-08-29. ⚠️ **Two of `shopOwner`'s five, and the three missing ones are missing for a reason
+  // that does not expire**: `tbl_active_lastName_firstName`, `tbl_active_firstName` and
+  // `tbl_active_city` all sort on fields that are RANDOM ciphertext here (ADR-029), so an index over
+  // them orders bytes rather than names. The chart index was in the same list until there was a chart,
+  // and it never belonged there — nothing about it was blocked, it had nothing to serve. That is the
+  // difference between the two paragraphs.
   user: ['login.email_unique', 'tbl_active_registeredAt', 'registeredAt_series'],
   shopOwner: [
     // 20260301000100 — the login unique, one index per sort column the admin table exposes, and

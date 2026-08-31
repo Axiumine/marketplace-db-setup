@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Four gates, all blocking:
-#   1. trivy                 — dependency advisories, HIGH+, production tree only (E18-S11)
+#   1. trivy                 — dependency advisories, HIGH+, production tree only
 #   2. migrations + coverage — every migration replays against a real MongoDB and the
 #      run is gated at 100% on every metric (yarn test:cov)
 #   3. mutation              — Stryker, gated at 100 (yarn test:mutation)
@@ -52,7 +52,7 @@
 # ⚠️ That list used to include "the SCA vulnerable-dependency check", and it does not
 # any more: the inspection Qodana actually runs is `VulnerableLibrariesLocal`, an
 # offline heuristic that queries no advisory feed and reports zero everywhere. Gate 1
-# is what checks dependencies now — see its own header. E18-S11.
+# is what checks dependencies now — see its own header.
 #
 # Ahead of gate 2: node. Gates 2 and 3 shell out to yarn, and `engines.node` is a
 # HARD gate under yarn classic — a mismatch exits 1 with `The engine "node" is
@@ -176,7 +176,7 @@ fi
 # advisory feed at all. `VulnerableLibrariesGlobalInspection`, the class in the
 # same image that does call vulnerability-search.jetbrains.com, appears in no
 # profile file and in no scan log this workspace has ever produced. A security
-# check that cannot report is indistinguishable from a passing one. E18-S11.
+# check that cannot report is indistinguishable from a passing one.
 #
 # Not `yarn audit`: yarn 1 aborts the entire run over the unpublished
 # @axiumine/marketplace-common, and `npm audit` needs a package-lock.json this
@@ -498,7 +498,7 @@ PUSH BLOCKED — Qodana failed.
 
 The gate lives in qodana.yaml: severityThresholds critical 0 / high 0,
 testCoverageThresholds 100 total / 100 fresh, plus the third-party license audit
-(its vulnerable-dependency inspection is the offline heuristic E18-S11 measured at
+(its vulnerable-dependency inspection is the offline heuristic measured at
 zero — the real check is the trivy gate above). Findings are listed above, with a report
 link on qodana.cloud.
 
