@@ -236,7 +236,7 @@ zero on every repo on this platform; the class that does query one is bundled wi
 profile — which is why the SCA line has left this repo's gate descriptions. Trivy reads `yarn.lock`
 natively, suppresses devDependencies and blocks on HIGH or CRITICAL. It is first because it is by far the
 cheapest gate here and needs neither node nor a reachable MongoDB. Bypass for a Docker or network outage,
-never for a finding: `SKIP_TRIVY=1 git push`. E18-S11.
+never for a finding: `SKIP_TRIVY=1 git push`.
 
 `.githooks/pre-commit` is the secret guard, then that same coverage gate, then that same scan, and the last
 two only when a staged path can move their verdict — sources, the dependency manifests, the scan and test
