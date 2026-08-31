@@ -6,10 +6,6 @@
 #
 # This repo is migrate-mongo migrations, not an application service, so most of the
 # platform's custom rules do not apply here — grepped before deciding what to keep:
-#   - marketplace-no-log-introspection-code: DROPPED. This repo never reads
-#     INTROSPECTION_CODE / x-introspectioncode; that header exists only on the
-#     service-to-service auth boundary between the backend services, which this repo
-#     is not part of.
 #   - marketplace-no-log-auth-token: DROPPED. This repo has no access/refresh token
 #     handling at all — no Redis sessions, no Authorization header. Nothing
 #     opaque-token shaped exists here for the rule to ever match.

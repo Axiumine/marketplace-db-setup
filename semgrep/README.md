@@ -26,16 +26,15 @@ Output is written as your own UID (`-u`), so no root-owned files.
 The yarn scripts pass `--config semgrep/`, which loads every rule file in this
 directory (custom + vendored) in one shot.
 
-`custom.yml` carries only `marketplace-no-log-reset-secret` of the platform's three
+`custom.yml` carries only `marketplace-no-log-reset-secret` of the platform's two
 custom rules. This repo's own validators define `resetPwd.resetHash` /
 `resetDateReq` (see `migrations/20260301000000-create-admin.js` and
 `migrations/20260301000100-create-shopOwner.js`), so a future migration or
 seed script that debug-prints one of those documents is a real risk worth
-guarding against. `marketplace-no-log-introspection-code` and
-`marketplace-no-log-auth-token` are **not** carried here: this repo has no
-introspection-code header and no access/refresh-token handling of any kind —
-it is migrations, not a running service on the auth boundary. See the header
-comment in `custom.yml` for the full grep-and-decide record.
+guarding against. `marketplace-no-log-auth-token` is **not** carried here: this
+repo has no access/refresh-token handling of any kind — it is migrations, not a
+running service on the auth boundary. See the header comment in `custom.yml` for
+the full grep-and-decide record.
 
 ## Provenance / reproducibility
 
