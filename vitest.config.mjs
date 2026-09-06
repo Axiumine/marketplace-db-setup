@@ -50,6 +50,37 @@ export default defineConfig({
 		hookTimeout: 30000,
 		coverage: {
 			provider: 'v8',
+			/*
+			 * ⚠️ `include` is what makes the gate below mean anything, and it is not optional.
+			 * With no `include` key, the v8 provider reports only the files a test actually
+			 * `import`-ed: a source file no suite ever loads is ABSENT from the report rather
+			 * than listed at 0%, and `thresholds` reads 100% over a set that quietly excludes
+			 * it (RISK_REGISTER R07). This repo was the one package on the platform still in
+			 * that state — 26 files in the report against 27 on disk, the missing one being
+			 * scripts/seedKeygrip.js. The globs below name every shipped source file, so a new
+			 * one is force-listed at 0% and takes the run red until it has a test.
+			 *
+			 * ⚠️ `coverage.all` does NOT do this. It was removed in vitest 4 and is read by
+			 * nothing; a non-null `include` is the whole mechanism. Do not replace one with the
+			 * other.
+			 *
+			 * setup/ is deliberately unnamed: it is gitignored, untracked, and setup/mongodb.js
+			 * is a mongosh runbook carrying real credentials rather than JavaScript — the same
+			 * call stryker.config.mjs makes with `!setup/**`, for the same two reasons.
+			 */
+			include: ['migrate-mongo-config.js', 'lib/**/*.js', 'migrations/**/*.js', 'scripts/**/*.js'],
+			/*
+			 * scripts/seedKeygrip.js is the admin entry point for ADR-034, out of scope the same
+			 * way an `index.mts` is in the services: everything it decides lives in lib/keygrip.js,
+			 * which IS covered and IS mutated. What is left is a Redis connection, one argv flag
+			 * and four console lines, and covering them takes a test that connects to a real Redis
+			 * to assert on wording. stryker.config.mjs excludes it for exactly this reason.
+			 *
+			 * Named file by file rather than as `scripts/**`: the blanket form would exempt the
+			 * next file added under scripts/ as silently as the missing `include` exempted this
+			 * one, which is the failure this whole block exists to stop.
+			 */
+			exclude: ['scripts/seedKeygrip.js'],
 			reporter: ['text', 'text-summary', 'html', 'lcov'],
 			thresholds: { 100: true }
 		}
