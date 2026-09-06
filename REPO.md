@@ -201,6 +201,15 @@ that were **loaded**, so a file no suite requires is absent from the report rath
 dotenv does not override a variable already present in the environment, which is what keeps the real `.env`
 credentials out of the assertions and out of any failure diff.
 
+⚠️ **That is `RISK_REGISTER` R07, and until 2026-09-06 mutation catching it was luck.** `vitest.config.mjs`
+now sets `coverage.include` over every source directory, which is the only thing that makes v8 force an
+unimported file into the report at 0%, and `scripts/coverage-audit.mjs` runs after vitest inside `yarn
+test:cov` to prove the report really does hold every git-tracked file that `include` gates. Whatever is
+missing has to be named in `coverage-exempt.txt` with the reason it can never be there; this repo names
+exactly one, `scripts/seedKeygrip.js`, for the reason `stryker.config.mjs` already gave. Exact paths only —
+a `scripts/**` glob would exempt the next file added there as silently as the missing `include` exempted
+this one.
+
 The repo sits at **100% statements / branches / functions / lines** and a **100 mutation score**. Coverage
 is gated in `vitest.config.mjs` (`thresholds: { 100: true }`), in `qodana.yaml` (`testCoverageThresholds`)
 and in both hooks; mutation is gated in `stryker.config.mjs` (`thresholds.break: 100`) and in

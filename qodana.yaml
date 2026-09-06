@@ -133,6 +133,18 @@ failureConditions:
 # that cannot be dropped and replayed), which is why every shape lives in lib/schemas/ and every
 # migration is a call. If DuplicatedCode fires over migrations/, the shape belongs in lib/schemas/ —
 # read that directory's README.md before reaching for an exclusion.
+#
+# JSPrimitiveTypeWrapperUsage on scripts/coverage-audit.mjs is the sixth entry and the one false
+# positive with a nameable root cause. `process.exitCode = 1` is the documented Node way for a script
+# to fail without the truncated-pipe risk process.exit() carries, and the inspection reads it as an
+# assignment to a property of a primitive — because this repo has no `@types/node` and no tsconfig, so
+# `process` resolves to nothing the linter can type. The identical file passes the identical scan in
+# every other repo that carries it, each of which has the typings. Scoped to the one file: an
+# assignment to a genuine primitive wrapper anywhere else in this repo must still fail the build.
+#
+# ⚠️ Symptom fix, like the one above. The root cause is the missing typings, and adding `@types/node`
+# would retire this entry and every successor to it — a dependency change that belongs in a commit of
+# its own, not in the one that introduces the coverage gate.
 exclude:
   - name: HardcodedPasswords
     paths:
@@ -149,6 +161,9 @@ exclude:
   - name: ThisExpressionReferencesGlobalObjectJS
     paths:
       - setup/mongodb.js
+  - name: JSPrimitiveTypeWrapperUsage
+    paths:
+      - scripts/coverage-audit.mjs
 
 #Execute shell command before Qodana execution (Applied in CI/CD pipeline)
 #bootstrap: sh ./prepare-qodana.sh
