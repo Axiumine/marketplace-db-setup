@@ -16,6 +16,32 @@ carries the rules; [`README.md`](./README.md) is the human-facing document.
 3. The DB user must already exist — create it with the snippets in `setup/mongodb.js`. That applies to the
    test user too: it needs `dbOwner` on the test DB, because the suite drops it.
 
+⚠️ **Several of those keys are not in this repo's `.env` at all — they answer from the workspace layer.**
+[`ADR-053`](../../docs/devprotocol/phase3/adr/ADR-053-the-shared-half-of-the-environment-is-one-file.md)
+moved every value identical across the sixteen repos into `.env.shared` at the workspace root, exported by
+one root `.envrc` that [direnv](https://direnv.net) loads. The list above says what the code **reads**,
+never where the value lives, and `../../scripts/env-diff.sh` is what reports the difference — a key the
+layer supplies prints `SHARED`, one nothing supplies prints `MISSING`. Two consequences land here:
+
+- ⚠️ **A shell without the direnv hook loads none of it, and says nothing.** `dotenv` then finds this
+  repo's `.env` alone — the half that did *not* move — and the suite dies naming one absent key,
+  `Missing MONGO_TEST_UDBOWNER in .env`, on a machine where that value is provisioned and correct. It
+  reads as an unprovisioned box and is not one. This is every non-interactive shell: a script run as
+  `sh -c`, a CI step, an editor's task runner, an assistant's tool shell — never an ordinary terminal,
+  which is why it does not reproduce when you go looking by hand. Run the command through the layer
+  instead — **`direnv exec . yarn test:cov`** — which walks up to the workspace-root `.envrc` (this repo
+  has none of its own) and evaluates it for that one command, needing no hook at all. `direnv allow`,
+  once per machine, is what makes the hooked form work.
+- ⚠️ **The git hooks inherit the shell that ran `git commit`.** `pre-commit`'s second gate is
+  `yarn test:cov`, and `pre-push` runs that plus Stryker (see *The hooks* below), so from a non-hooked
+  shell they fail on the environment rather than on the diff while the message blames the suite.
+  `direnv exec . git commit …` and `direnv exec . git push` are the fix. A docs-only commit skips that
+  gate altogether, so the problem stays hidden until the next commit that touches a source file.
+
+⚠️ **Never answer either of those by copying a shared key back into this repo's `.env`.** The layer wins —
+`dotenv` does not overwrite an exported variable — so the copy is dead text wherever the hook is loaded and
+a second source of truth everywhere else. That is `RISK_REGISTER` **R04** being manufactured by hand.
+
 ## How migrate-mongo tracks state
 
 - A `changelog` collection records each applied migration filename + timestamp. `up` applies every file
