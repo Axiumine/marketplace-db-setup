@@ -306,8 +306,14 @@ fi
 # setup, the test suite and the semgrep rules), the dependency manifests (SCA +
 # license audit), the scan and test configs, and the hooks themselves. Deletions
 # count, so D stays in the filter. Docs, the env template and .gitignore do not.
+#
+# `coverage-exempt.txt` joins them for the same reason. The gate that proves
+# every source file is actually in the coverage report reads it, so a commit
+# that adds an exemption — the single edit that can widen the hole this gate
+# exists to close — would otherwise be the commit that ran no gate at all.
+# `scripts/` is already in the list, so the gate itself is covered already.
 RELEVANT_PATHS='^(migrations/|lib/|scripts/|setup/|test/|semgrep/|\.githooks/|package\.json$|yarn\.lock$'
-RELEVANT_PATHS+='|qodana\.(yaml|sh)$|vitest\.config\.mjs$|migrate-mongo-config\.js$)'
+RELEVANT_PATHS+='|qodana\.(yaml|sh)$|vitest\.config\.mjs$|migrate-mongo-config\.js$|coverage-exempt\.txt$)'
 
 # Same reasoning as the secret guard's list above: unguarded, a failed `git diff` is
 # indistinguishable from an empty one, and the empty one is the branch that exits 0 having

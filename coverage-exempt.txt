@@ -1,0 +1,16 @@
+# Every tracked source file that `coverage.include` gates but the coverage report does not contain,
+# with the reason it can never be there. `scripts/coverage-audit.mjs` runs after vitest inside
+# `yarn test:cov` and fails when this list and reality disagree in EITHER direction: a file missing
+# from the report and unnamed here is a file the 100% threshold said nothing about (RISK_REGISTER
+# R07), and a name here that is now covered is a stale line holding the hole open for the next file
+# to carry that path.
+#
+# Exact paths only, never globs. A directory glob exempts whatever lands in that directory next, in
+# silence, with the run still green — which is the failure this file exists to close. One line per
+# file is the cost, and it is the point: an untestable source file becomes a visible decision.
+
+# The ADR-034 admin entry point. Everything it decides lives in lib/keygrip.js, which IS covered and
+# IS mutated; what is left is a Redis connection, one argv flag and four console lines, and covering
+# them takes a test that connects to a real Redis only to assert on wording. stryker.config.mjs
+# leaves it out for the same reason.
+scripts/seedKeygrip.js
