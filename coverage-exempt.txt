@@ -1,9 +1,14 @@
-# Every tracked source file that `coverage.include` gates but the coverage report does not contain,
-# with the reason it can never be there. `scripts/coverage-audit.mjs` runs after vitest inside
-# `yarn test:cov` and fails when this list and reality disagree in EITHER direction: a file missing
-# from the report and unnamed here is a file the 100% threshold said nothing about (RISK_REGISTER
-# R07), and a name here that is now covered is a stale line holding the hole open for the next file
-# to carry that path.
+# Every tracked source file under a declared source root that the coverage report does not account
+# for, with the reason it can never be there. There are two ways in, and the second was invisible
+# until 2026-09-06: `coverage.include` gates the file and vitest reported nothing for it (RISK_REGISTER
+# R07), or no `coverage.include` glob matches the file at all — a `.js` where the globs say `.ts`, a
+# stylesheet beside them (RISK_REGISTER R56). The second kind is absent from the report AND from the
+# list the report used to be compared against, so nothing anywhere went red for it.
+#
+# `scripts/coverage-audit.mjs` runs after vitest inside `yarn test:cov` and fails when this list and
+# reality disagree in EITHER direction: a file the report does not account for and unnamed here is a
+# file the 100% threshold said nothing about, and a name here that is now covered is a stale line
+# holding the hole open for the next file to carry that path.
 #
 # Exact paths only, never globs. A directory glob exempts whatever lands in that directory next, in
 # silence, with the run still green — which is the failure this file exists to close. One line per
@@ -14,3 +19,17 @@
 # them takes a test that connects to a real Redis only to assert on wording. stryker.config.mjs
 # leaves it out for the same reason.
 scripts/seedKeygrip.js
+
+# The file-count gate itself — an `.mjs` under a `scripts/**/*.js` glob, so it has never gated
+# itself. It is the thing doing the measuring, and both of its directions are proved from the parent
+# workspace by `./scripts/audit-check.sh` §6 rather than by a unit test that would have to fake a git
+# index and an lcov file to say anything about it.
+scripts/coverage-audit.mjs
+
+# A shell filter the lockfile gate runs. vitest has no runner for it, and what proves it works is
+# that gate going red on a lockfile carrying a registry it should not.
+scripts/lockfile-registry-filter.sh
+
+# Prose, not source. The README beside the shared `$jsonSchema` shapes, which those schemas point at
+# for the one judgement no program can make: which fields are personal (ADR-029).
+lib/schemas/README.md
