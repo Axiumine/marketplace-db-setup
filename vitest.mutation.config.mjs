@@ -15,6 +15,9 @@ export default defineConfig({
 		include: ['test/**/*.test.mjs'],
 		fileParallelism: false,
 		testTimeout: 30000,
-		hookTimeout: 30000
+		hookTimeout: 30000,
+		// `vitest.testNames.mjs` caps how long a test's name may be — the mutation gate selects tests by
+		// name, and past a size it cannot; see the file.
+		setupFiles: ['./vitest.testNames.mjs']
 	}
 })
