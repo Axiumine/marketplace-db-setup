@@ -36,6 +36,8 @@ migration shape: [`REPO.md`](./REPO.md).
 It is **hook-only**: `pre-push` calls it and nothing else does, not to check a change, not before a
 commit, not to confirm a survivor is fixed. The threshold stays 100 regardless; reproduce a survivor by
 hand-applying the mutant and running `yarn test`. Why an on-demand run is never the answer: [`REPO.md`](./REPO.md).
+⚠️ Since ADR-055 the script has a second caller, `.github/workflows/gates.yml`, which runs it on
+every pull request — two callers, both automated, and a hand is neither.
 
 ⚠️ **Never lower a coverage or mutation threshold, and never remove a gate.** 100% on all four coverage
 metrics, mutation score 100. A commit that needs a threshold lowered needs a test instead.
