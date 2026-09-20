@@ -11,6 +11,7 @@
   "scripts": {
     "test": "vitest run",
     "test:seed": "SEED_DEMO=true vitest run",
+    "test:unit": "vitest run --exclude 'test/migrations.test.mjs'",
     "test:cov": "vitest run --coverage && node scripts/coverage-audit.mjs",
     "test:mutation": "stryker run",
     "seed:keygrip": "node scripts/seedKeygrip.js",

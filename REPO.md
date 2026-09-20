@@ -109,6 +109,13 @@ length of one test, so the encryption path is exercised either way. ⚠️ Those
 change to `migrations/`; run `yarn test` to confirm them on a real database rather than trusting this file.
 It is fast — about a second — so a long run means something is wrong, not that the suite is heavy.
 
+⚠️ **`yarn test:unit` is that same suite minus the replay** — five files, 50 tests, no MongoDB anywhere
+in it — and it exists for one caller: `.github/workflows/gates.yml`, which has no replica set to replay
+against. It carries no coverage gate, because the statements only the replay reaches would fail one: on a
+runner the replay skips itself, the suite still reports green, and the report lands twenty statements and
+six functions short. The threshold itself is untouched, and `pre-push` still measures it here, where the
+database is.
+
 ### When it goes wrong
 
 ⚠️ **If the `MONGO_TEST_*` block is empty the suite does not skip — it fails, seventeen times, on a
