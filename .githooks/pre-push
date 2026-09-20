@@ -1,20 +1,21 @@
 #!/usr/bin/env bash
-# Five gates, all blocking:
-#   1. trivy                 — dependency advisories, HIGH+, production tree only
-#   2. scorecard             — OpenSSF supply-chain posture, floored in .scorecard-floor
-#   3. migrations + coverage — every migration replays against a real MongoDB and the
+# Six gates, all blocking:
+#   1. semgrep               — SAST over migrations/, lib/, scripts/, setup/ and test/
+#   2. trivy                 — dependency advisories, HIGH+, production tree only
+#   3. scorecard             — OpenSSF supply-chain posture, floored in .scorecard-floor
+#   4. migrations + coverage — every migration replays against a real MongoDB and the
 #      run is gated at 100% on every metric (yarn test:cov)
-#   4. mutation              — Stryker, gated at 100 (yarn test:mutation)
-#   5. Qodana                — inspections, SAST, license audit, coverage (qodana.yaml)
+#   5. mutation              — Stryker, gated at 100 (yarn test:mutation)
+#   6. Qodana                — inspections, SAST, license audit, coverage (qodana.yaml)
 #
 # One omission left, down from three:
 #
 #   lint — there is no eslint.config.js and no .prettierrc here, the one exception
 #     on the platform. The content is applied migrations, and those are immutable:
 #     a formatter that rewrites a file nobody may edit produces a diff nobody may
-#     take. Qodana still inspects them (gate 5) — inspecting is not rewriting.
+#     take. Qodana still inspects them (gate 6) — inspecting is not rewriting.
 #
-# ⚠️ Gate 4 is new, and this header used to argue at length that it could not exist:
+# ⚠️ Gate 5 is new, and this header used to argue at length that it could not exist:
 # "there is no stryker.config.mjs and no test:mutation script. Mutating a migration means
 # mutating an immutable, already-applied file; the answer to a survivor there is never
 # 'edit the migration'." Both halves were wrong. There is a stryker.config.mjs now, and the
@@ -42,7 +43,7 @@
 # reverts them down — it fails loudly when a validator, an index or an ordering
 # breaks, which is exactly the class of bug that reaches production silently.
 #
-# Gate 5 was the newer half until gate 4 landed. `qodana.yaml` and `qodana.sh` had been sitting in this
+# Gate 6 was the newer half until gate 5 landed. `qodana.yaml` and `qodana.sh` had been sitting in this
 # repo since the sweep that gave the other nine a scan, with no hook calling either
 # of them — this was the last unwired Qodana on the platform. What it adds is the JS
 # inspections and taint analysis over migrations/, lib/ and setup/, the license
@@ -52,16 +53,16 @@
 #
 # ⚠️ That list used to include "the SCA vulnerable-dependency check", and it does not
 # any more: the inspection Qodana actually runs is `VulnerableLibrariesLocal`, an
-# offline heuristic that queries no advisory feed and reports zero everywhere. Gate 1
+# offline heuristic that queries no advisory feed and reports zero everywhere. Gate 2
 # is what checks dependencies now — see its own header.
 #
-# Ahead of gate 2: node. Gates 3 and 4 shell out to yarn, and `engines.node` is a
+# Ahead of gate 3: node. Gates 4 and 5 shell out to yarn, and `engines.node` is a
 # HARD gate under yarn classic — a mismatch exits 1 with `The engine "node" is
 # incompatible with this module`, not a warning. Without the switch below, a push
 # from a shell on the machine default node dies before the first gate, under
-# whatever banner that gate prints, which is never what went wrong. Gate 2 needs a node
+# whatever banner that gate prints, which is never what went wrong. Gate 3 needs a node
 # to run its floor comparison in, but not through yarn, so the engine range does not
-# bind it. Gates 1 and 5 do not need node at all: both run in a container and neither
+# bind it. Gates 1, 2 and 6 do not need node at all: all three run in a container and none
 # calls node or yarn.
 #
 # Enabled by `git config core.hooksPath .githooks`, which the package.json
@@ -170,9 +171,134 @@ MSG
 fi
 
 # ---------------------------------------------------------------------------
-# Gate 1 — Trivy (dependency advisories). The gates below ask whether the
-# code in this repo is correct; this one asks whether the code it installed is
-# safe. Nothing else on
+# Gate 1 — Semgrep (SAST). The gates below ask whether the migrations are
+# correct and whether what this repo installed is safe; this one asks whether
+# the code it wrote is. Deliberately push-only, like mutation: it needs Docker
+# and the pinned image, and a hook paid per commit is a hook that gets bypassed
+# out of habit.
+#
+# It runs FIRST because it is by far the cheapest of the six (~3 s against the
+# minutes the rest take together), so a rule violation is reported in seconds
+# rather than after a full replay + mutation + Qodana run.
+#
+# `semgrep:ci` is the --error variant of `yarn semgrep`: exit 1 on any finding,
+# plus a SARIF at semgrep.sarif (gitignored). Every rule is vendored under
+# semgrep/ and the container runs --network none, so the verdict is offline and
+# reproducible — the pinned image tag is the only moving part.
+#
+# ⚠️ This is NOT the same scan as Qodana's SAST in gate 6. Qodana runs JetBrains
+# inspections over the whole tree; this runs the semgrep registry packs plus
+# semgrep/custom.yml, whose rules are this platform's own.
+#
+# ⚠️ This gate is newly wired, and the ruleset it runs is not. `yarn semgrep:ci`,
+# semgrep/custom.yml and semgrep/vendor/ have been in this repo since the sweep
+# that gave the other fourteen packages a scan — with no hook calling any of them.
+# This was the last unwired SAST on the platform, and it stayed invisible because
+# nothing measured it: the .github/workflows/gates.yml of ADR-055 ran semgrep on
+# GitHub before anything ran it here, and its very first run reported a finding
+# this hook had never shown anybody. A gate that exists and is called by nothing
+# is worth exactly what it costs to run, which is nothing.
+#
+# ⚠️ Rule 1 of the block below — "a true positive is fixed in the source" — meets
+# this repo's own immutability rule head-on, because the source here is applied
+# migrations. It is not a contradiction: a finding in an applied migration is
+# either a genuine false positive, which takes an inline `// nosemgrep: <rule-id>`
+# and changes no behaviour (migrate-mongo records only fileName and appliedAt for
+# an applied migration, with no checksum over its bytes), or a real secret, which
+# is a disclosure to handle by rotating the credential and writing a NEW migration
+# — never by editing the old one to hide the evidence.
+#
+# Bypass: `SKIP_SEMGREP=1 git push` — for a Docker outage, never for a finding.
+# ---------------------------------------------------------------------------
+
+if [ -n "${SKIP_SEMGREP:-}" ]; then
+	echo 'pre-push [1/6]: Semgrep gate skipped — SKIP_SEMGREP is set.' >&2
+else
+	# $1 = what is wrong, $2… = the command(s) that fix it. A missing prerequisite
+	# blocks; it never warns and continues. A gate that steps aside when it cannot
+	# run is not a gate, it is the hole this hook exists to close, one condition lower.
+	semgrep_block() {
+		local reason="$1"
+		shift
+		{
+			echo
+			echo '────────────────────────────────────────────────────────────────────────────'
+			echo "PUSH BLOCKED — $reason"
+			echo
+			echo 'Fix it with:'
+			echo
+			printf '    %s\n' "$@"
+			echo
+			echo 'Bypass once (every other gate still runs): SKIP_SEMGREP=1 git push'
+			echo '────────────────────────────────────────────────────────────────────────────'
+		} >&2
+		exit 1
+	}
+
+	# An absent ruleset is not an empty ruleset: `--config semgrep/` on a missing
+	# directory is an error, but a half-restored one would scan with whatever
+	# survived and report 0 findings, which reads exactly like a pass.
+	[ -d semgrep ] ||
+		semgrep_block 'semgrep/ is missing from the repo root — every rule this gate runs is vendored there.' \
+			'git checkout semgrep'
+
+	command -v docker > /dev/null 2>&1 ||
+		semgrep_block 'docker not found in PATH — the scan runs inside the pinned semgrep container.' \
+			'# install Docker Engine, then push again:' \
+			'https://docs.docker.com/engine/install/'
+
+	docker info > /dev/null 2>&1 ||
+		semgrep_block 'docker daemon not reachable.' \
+			'sudo systemctl start docker'
+
+	# Read the tag out of the yarn script rather than hard-coding it here, the same
+	# way the Qodana gate reads its linter out of qodana.yaml: bumping the engine in
+	# one place must not leave this hook checking for an image no scan uses.
+	SEMGREP_IMAGE="$(grep -oE 'semgrep/semgrep:[0-9][0-9.]*' package.json | head -n 1 || true)"
+
+	[ -n "$SEMGREP_IMAGE" ] ||
+		semgrep_block "no 'semgrep/semgrep:<version>' image found in the package.json scripts." \
+			'# restore the semgrep scripts, then push again:' \
+			'git checkout package.json'
+
+	# The container would be pulled on demand. Blocking instead keeps a slow or
+	# unreachable Docker Hub from turning into a failed push: one explicit pull per
+	# image bump, versus a network flake on any push.
+	docker image inspect "$SEMGREP_IMAGE" > /dev/null 2>&1 ||
+		semgrep_block "semgrep image $SEMGREP_IMAGE is not present locally." \
+			"docker pull $SEMGREP_IMAGE"
+
+	echo "pre-push [1/6]: running the SAST gate ($SEMGREP_IMAGE)…"
+
+	if ! yarn semgrep:ci; then
+		cat >&2 <<'MSG'
+
+────────────────────────────────────────────────────────────────────────────
+PUSH BLOCKED — Semgrep found something, or the scan could not run.
+
+Every finding is printed above and repeated in semgrep.sarif. Read the rule id
+first, then the code it matched:
+
+  1. A true positive is fixed in the source, never in the ruleset. Where the
+     source is an applied migration, that means rotating whatever leaked and
+     writing a NEW migration — never editing the applied one.
+  2. A genuine false positive gets an inline `// nosemgrep: <rule-id>` with the
+     reason written on the line above it. Never a bare `// nosemgrep`, which
+     silences every rule on that line, and never an edit to semgrep/vendor/ —
+     that is a frozen registry snapshot which vendor/refresh.sh will restore.
+
+Re-run `yarn semgrep` for the human-readable report, then push again.
+────────────────────────────────────────────────────────────────────────────
+MSG
+		exit 1
+	fi
+
+	echo 'pre-push [1/6]: Semgrep clean.'
+fi
+
+# ---------------------------------------------------------------------------
+# Gate 2 — Trivy (dependency advisories). Gate 1 asks whether the code this repo
+# wrote is safe; this one asks whether the code it installed is. Nothing else on
 # the platform answered that question. Qodana's `VulnerableLibrariesLocal` is
 # armed in every qodana.yaml, runs on every commit and push, and reports zero
 # problems everywhere — because it is a 0.03 s offline heuristic that queries no
@@ -206,7 +332,7 @@ fi
 # ---------------------------------------------------------------------------
 
 if [ -n "${SKIP_TRIVY:-}" ]; then
-	echo 'pre-push [1/5]: dependency-advisory gate skipped — SKIP_TRIVY is set.' >&2
+	echo 'pre-push [2/6]: dependency-advisory gate skipped — SKIP_TRIVY is set.' >&2
 else
 	# Same contract as the node and yarn checks above: a missing prerequisite blocks,
 	# it never warns and continues. A gate that steps aside when it cannot run is not
@@ -250,7 +376,7 @@ else
 		trivy_block "trivy image $TRIVY_IMAGE is not present locally." \
 			"docker pull $TRIVY_IMAGE"
 
-	echo "pre-push [1/5]: checking dependency advisories ($TRIVY_IMAGE)…"
+	echo "pre-push [2/6]: checking dependency advisories ($TRIVY_IMAGE)…"
 
 	# --db-repository is not a preference: from here mirror.gcr.io answers 404 for
 	# the database layer and trivy treats that as fatal rather than falling back to
@@ -290,11 +416,11 @@ MSG
 		exit 1
 	fi
 
-	echo 'pre-push [1/5]: no HIGH or CRITICAL advisory in the production tree.'
+	echo 'pre-push [2/6]: no HIGH or CRITICAL advisory in the production tree.'
 fi
 
 # ---------------------------------------------------------------------------
-# Gate 2 — OpenSSF Scorecard (supply-chain posture). The gate above this one reads
+# Gate 3 — OpenSSF Scorecard (supply-chain posture). The gate above this one reads
 # the working tree: trivy reads yarn.lock, and every gate below replays the
 # migrations that are about to be pushed. This one does neither.
 #
@@ -332,7 +458,7 @@ fi
 # ---------------------------------------------------------------------------
 
 if [ -n "${SKIP_SCORECARD:-}" ]; then
-	echo 'pre-push [2/5]: supply-chain posture gate skipped — SKIP_SCORECARD is set.' >&2
+	echo 'pre-push [3/6]: supply-chain posture gate skipped — SKIP_SCORECARD is set.' >&2
 else
 	# Same contract as every gate above: a missing prerequisite blocks. A gate that
 	# steps aside when it cannot run is not a gate.
@@ -408,7 +534,7 @@ else
 			'gh auth login' \
 			'# or, for one push:  GITHUB_AUTH_TOKEN=<token> git push'
 
-	echo "pre-push [2/5]: checking supply-chain posture of $SCORECARD_SLUG ($SCORECARD_IMAGE_TAG)…"
+	echo "pre-push [3/6]: checking supply-chain posture of $SCORECARD_SLUG ($SCORECARD_IMAGE_TAG)…"
 
 	SCORECARD_JSON="$(mktemp)"
 	if ! GITHUB_AUTH_TOKEN="$SCORECARD_TOKEN_VALUE" docker run --rm \
@@ -491,7 +617,7 @@ EVAL
 
 	case "$SCORECARD_VERDICT" in
 		0)
-			echo 'pre-push [2/5]: supply-chain posture at or above the floor.'
+			echo 'pre-push [3/6]: supply-chain posture at or above the floor.'
 			;;
 		3)
 			cat >&2 <<'MSG'
@@ -529,7 +655,7 @@ MSG
 	esac
 fi
 
-echo "pre-push [3/5]: replaying every migration against a real MongoDB, gated at 100% coverage (yarn test:cov)…"
+echo "pre-push [4/6]: replaying every migration against a real MongoDB, gated at 100% coverage (yarn test:cov)…"
 
 if ! yarn test:cov; then
 	cat >&2 <<'MSG'
@@ -568,7 +694,7 @@ MSG
 fi
 
 # ---------------------------------------------------------------------------
-# Gate 4 — mutation. Coverage asks whether a line RAN; mutation asks whether a
+# Gate 5 — mutation. Coverage asks whether a line RAN; mutation asks whether a
 # test would have FAILED had that line been wrong, and in this repo the two
 # answers diverged by half: 100% coverage, 52.92% mutation score.
 #
@@ -582,10 +708,10 @@ fi
 # `dbOwner` on that one database).
 #
 # ⚠️ No SKIP_TESTS-style reuse is possible: Stryker runs the suite once per mutant
-# under its own instrumentation, so nothing gate 3 produced can stand in for it.
+# under its own instrumentation, so nothing gate 4 produced can stand in for it.
 # ---------------------------------------------------------------------------
 
-echo 'pre-push [4/5]: mutation testing, gated at 100 (yarn test:mutation) — ~9 minutes, concurrency 1…'
+echo 'pre-push [5/6]: mutation testing, gated at 100 (yarn test:mutation) — ~9 minutes, concurrency 1…'
 
 if ! yarn test:mutation; then
 	cat >&2 <<'MSG'
@@ -631,7 +757,7 @@ MSG
 fi
 
 # ---------------------------------------------------------------------------
-# Gate 5 — Qodana. It runs here as well as in pre-commit, for two reasons that
+# Gate 6 — Qodana. It runs here as well as in pre-commit, for two reasons that
 # pre-commit structurally cannot cover.
 #
 # 1. `git merge --no-ff` never fires pre-commit. Git runs that hook for
@@ -647,7 +773,7 @@ fi
 #    merge, standing on main, which is exactly the revision the baseline wants.
 #
 # SKIP_TESTS=1, exactly as the other thirteen repos pass it: qodana.sh would
-# otherwise re-run `yarn test:cov` to produce coverage/lcov.info, and gate 3 above
+# otherwise re-run `yarn test:cov` to produce coverage/lcov.info, and gate 4 above
 # has just written it. Worth being precise about why the flag matters and not only
 # that it saves a replay — qodana.sh runs the suite as `yarn test:cov || true`, so
 # a regenerated report comes with its exit code swallowed. Reusing the one the
@@ -727,7 +853,7 @@ docker image inspect "$LINTER" > /dev/null 2>&1 ||
 		'# get a project token from https://qodana.cloud, then:' \
 		"echo 'QODANA_TOKEN=<token>' >> .env"
 
-echo "pre-push [5/5]: enforcing the Qodana gate ($LINTER)…"
+echo "pre-push [6/6]: enforcing the Qodana gate ($LINTER)…"
 
 if ! SKIP_TESTS=1 ./qodana.sh --results-dir .qodana/results; then
 	cat >&2 <<'MSG'

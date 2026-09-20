@@ -50,7 +50,9 @@ const { ALGORITHM_DETERMINISTIC, ALGORITHM_RANDOM, encryptDocument } = require('
 
 const seedEnabled = () => process.env.SEED_DEMO === 'true';
 
-// bcrypt of "1234567890"
+// bcrypt of "1234567890" — a published demo password, not a credential: this hash guards demo
+// content that only exists when SEED_DEMO=true, and the plaintext is on the line above.
+// nosemgrep: generic.secrets.security.detected-bcrypt-hash.detected-bcrypt-hash
 const DEMO_PWD = '$2y$14$hzw7O9l5S65nWptPUnMtrOWgEq8CqNej7HZ5ggkaZ2Zspam99y0Ey';
 
 const ID_ADMIN = new ObjectId('5c9a013fcf1448b9d885e018');
