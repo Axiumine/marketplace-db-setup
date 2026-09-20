@@ -116,6 +116,17 @@ runner the replay skips itself, the suite still reports green, and the report la
 six functions short. The threshold itself is untouched, and `pre-push` still measures it here, where the
 database is.
 
+⚠️ **`yarn test:mutation:ci` is the mutation gate in the same position, and `stryker.ci.config.mjs` is the
+only reason it can run at all on a runner.** `mutate` in the real config covers `migrations/**`, which
+migrate-mongo replays against a real database or not at all, so on a runner 60 of the 943 mutants come back
+survived — 56 of them in `20260301000600-seed-demo.js` — and the gate reads 85.68 against a break threshold
+of 100. The CI config drops those patterns and `lib/encryption.js` with them, leaving 582 mutants that the
+first run killed with no database present: `lib/schemas/**`, `lib/keygrip.js`, `lib/mongoUrl.js`,
+`migrate-mongo-config.js`. It inherits everything else from `stryker.config.mjs` by spreading it, and throws
+if the pattern it removes is ever renamed there. The break threshold is still 100 in both, and `pre-push`
+still runs the full config. ⚠️ Like `test:mutation`, neither script is ever started by hand: the callers are
+`.githooks/pre-push` and `.github/workflows/gates.yml`, and that is the whole list.
+
 ### When it goes wrong
 
 ⚠️ **If the `MONGO_TEST_*` block is empty the suite does not skip — it fails, seventeen times, on a

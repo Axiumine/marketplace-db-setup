@@ -14,6 +14,7 @@
     "test:unit": "vitest run --exclude 'test/migrations.test.mjs'",
     "test:cov": "vitest run --coverage && node scripts/coverage-audit.mjs",
     "test:mutation": "stryker run",
+    "test:mutation:ci": "stryker run stryker.ci.config.mjs",
     "seed:keygrip": "node scripts/seedKeygrip.js",
     "migrate:status": "migrate-mongo status",
     "migrate:up": "migrate-mongo up",
