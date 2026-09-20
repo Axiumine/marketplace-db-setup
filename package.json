@@ -37,6 +37,9 @@
     "@vitest/coverage-v8": "^4.1.10",
     "vitest": "^4.1.10"
   },
+  "resolutions": {
+    "qs": "^6.15.2"
+  },
   "author": "Giovanni Manzoni <dev@giovannimanzoni.com> (https://giovannimanzoni.com)",
   "repository": {
     "type": "git",

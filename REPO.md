@@ -261,7 +261,7 @@ consecutive runs confirm it.
 
 ## The hooks
 
-`.githooks/pre-push` is four blocking gates: trivy (dependency advisories over `yarn.lock`, HIGH and
+`.githooks/pre-push` is five blocking gates: trivy (dependency advisories over `yarn.lock`, HIGH and
 CRITICAL, production tree only), `yarn test:cov` (the replay at 100% on every metric),
 `yarn test:mutation` (Stryker at 100), then Qodana (`./qodana.sh`). Not lint — that is the one omission
 left, and the hook's own header argues it.
