@@ -637,6 +637,7 @@ exports[`20260301000200-create-company.js — up() and down() issue exactly thes
                   },
                   "publicName": {
                     "bsonType": "string",
+                    "minLength": 1,
                     "maxLength": 100,
                     "description": "the trading name shown to customers, not the registered legal name"
                   },
@@ -2048,19 +2049,6 @@ exports[`20260829000000-account-lifecycle-fields.js — up() and down() issue ex
 "{
   "calls": [
     {
-      "call": "updateMany",
-      "name": "user",
-      "filter": {},
-      "update": {
-        "$unset": {
-          "deletedBy": "",
-          "disabledBy": "",
-          "disabledReason": "",
-          "scrubbedAt": ""
-        }
-      }
-    },
-    {
       "call": "command",
       "spec": {
         "collMod": "user",
@@ -2323,7 +2311,7 @@ exports[`20260829000000-account-lifecycle-fields.js — up() and down() issue ex
     },
     {
       "call": "updateMany",
-      "name": "shopOwner",
+      "name": "user",
       "filter": {},
       "update": {
         "$unset": {
@@ -2557,6 +2545,19 @@ exports[`20260829000000-account-lifecycle-fields.js — up() and down() issue ex
         },
         "validationLevel": "strict",
         "validationAction": "error"
+      }
+    },
+    {
+      "call": "updateMany",
+      "name": "shopOwner",
+      "filter": {},
+      "update": {
+        "$unset": {
+          "deletedBy": "",
+          "disabledBy": "",
+          "disabledReason": "",
+          "scrubbedAt": ""
+        }
       }
     }
   ],

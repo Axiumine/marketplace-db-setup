@@ -124,11 +124,18 @@ test('with no pair in the environment a single 64-byte key is minted', () => {
 
   assert.equal(adopted, false);
   assert.deepEqual(Object.keys(keys[0]), ['id', 'material', 'createdAt']);
-  assert.equal(keys[0].id, 'k1');
+  // `k<digits>`, the same shape `marketplace-common`'s own `nextKeyId` mints — not the fixed `'k1'`.
+  assert.match(keys[0].id, /^k\d+$/, 'k<digits> shape');
   assert.equal(keys[0].createdAt, '2026-08-12T09:14:22.581Z');
   assert.equal(Buffer.from(keys[0].material, 'base64').length, 64);
-  // Minted, not fixed: two runs must not produce the same key.
-  assert.notEqual(keys[0].material, buildSeedKeys(ENV, NOW).keys[0].material);
+
+  // Minted, not fixed: two runs must not produce the same key, and — B41 — not the same id either. A
+  // fixed id made `keygripFingerprint`, which hashes only ids, identical across two `--force` re-seeds
+  // with completely different material, defeating the one verification step an admin has.
+  const again = buildSeedKeys(ENV, NOW);
+  assert.notEqual(keys[0].material, again.keys[0].material);
+  assert.notEqual(keys[0].id, again.keys[0].id);
+  assert.notEqual(keygripFingerprint(keys), keygripFingerprint(again.keys), 'two fresh mints must fingerprint differently');
 });
 
 test('a virgin Redis is seeded at version 1 and the record is readable', async () => {

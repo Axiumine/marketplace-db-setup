@@ -540,6 +540,7 @@ exports[`the full validator of every collection is frozen > company validator 1`
           },
           "publicName": {
             "bsonType": "string",
+            "minLength": 1,
             "maxLength": 100,
             "description": "the trading name shown to customers, not the registered legal name"
           },
