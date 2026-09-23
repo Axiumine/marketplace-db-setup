@@ -1238,6 +1238,42 @@ if (!URL) {
     await migration.up(db);
   });
 
+  test('20260829000000 down() succeeds against a currently-suspended account (B4)', async () => {
+    // `down()` used to `$unset` the four lifecycle paths BEFORE swapping back the permissive
+    // validator. For any document with `disabled: true` that left the STRICT validator — the one `up()`
+    // installed, whose `dependencies: { disabled: ['disabledReason'] }` demands a reason beside
+    // `disabled: true` — enforcing itself against the very update trying to clear that reason. The
+    // `updateMany` threw, mid-batch, leaving the collection half-stripped with the strict validator
+    // still in place: a real rollback failure on every database that has ever suspended an account.
+    //
+    // The fixture is a document the CURRENT (strict) validator accepts: suspended, with a reason, same
+    // shape as the `accepts()` case a few tests up. If the order bug were still here, this insert would
+    // succeed and the `down()` call below would throw instead of resolving.
+    const migration = require(path.join(MIGRATIONS_DIR, '20260829000000-account-lifecycle-fields.js'));
+    const suspended = { ...validUser(), disabled: true, disabledReason: cipher() };
+
+    await db.collection('user').insertOne(suspended);
+
+    try {
+      await migration.down(db);
+
+      // `down()` only takes back the four paths it added — `disabled` itself is untouched, so the
+      // account is still suspended, just with nothing left to say why.
+      const after = await db.collection('user').findOne({ _id: suspended._id });
+      assert.equal(after.disabled, true, 'down() must not touch the disabled flag itself');
+      assert.equal('disabledReason' in after, false, 'down() unsets disabledReason on every document, suspended or not');
+      assert.equal('deletedBy' in after, false, 'down() unsets deletedBy on every document');
+      assert.equal('scrubbedAt' in after, false, 'down() unsets scrubbedAt on every document');
+    } finally {
+      // `down()` necessarily leaves this document stranded — a suspended account with no reason — which
+      // is the whole point (it cannot invent a reason nobody wrote). Delete it before restoring `up()`,
+      // or the fixture would trip `refuseIfStranded` for real and the restore below would fail for a
+      // reason that has nothing to do with this test.
+      await db.collection('user').deleteOne({ _id: suspended._id });
+      await migration.up(db);
+    }
+  });
+
   test('user refuses a defaultAddress that points nowhere', async () => {
     // "At most one default address", enforced by the database rather than by every write path. A
     // boolean per element can represent two defaults; a pointer cannot represent a second one at all,

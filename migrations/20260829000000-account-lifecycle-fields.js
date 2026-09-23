@@ -130,11 +130,24 @@ module.exports = {
   },
 
   async down(db) {
-    // Fields first, validator second — the reverse of `up`'s order, and the only order that works. The
-    // `$unset` needs a validator that still permits the paths it is clearing.
+    // ⚠️ Validator first, fields second — NOT the mirror of `up`'s order. `up` checks before it writes
+    // because both of its writes happen under the SAME (new) validator; `down` has two different
+    // validators in play and picking the wrong one to unset under is the whole bug this order avoids.
+    //
+    // The strict validator this migration installed is still active until `setValidator` runs, and it
+    // carries `dependencies: { disabled: ['disabledReason'] }`. Unsetting the fields first, as an
+    // earlier version of this function did, ran that `$unset` against a currently-suspended account
+    // (`disabled: true`, and now no `disabledReason`) while that very rule was still enforced — the
+    // updateMany threw on exactly the account this migration exists to describe, mid-batch, leaving
+    // the collection half-stripped with the strict validator still installed. Swapping to the
+    // permissive validator FIRST retires the dependency rule before any document is touched, so the
+    // `$unset` that follows can never trip it: `collMod` does not re-validate what is already stored
+    // (see `refuseIfStranded` above), so the still-added fields on existing documents raise nothing at
+    // the swap, and the subsequent `$unset` only ever removes properties the new validator has no
+    // opinion on.
     for (const target of TARGETS) {
-      await unsetLifecycle(db, target.collection);
       await setValidator(db, target.collection, withoutLifecycle(target));
+      await unsetLifecycle(db, target.collection);
     }
   }
 };
