@@ -159,8 +159,9 @@ match `SEED_DEMO`; `down` reverts everything (collections dropped, `changelog` e
 creates a collection, so there is no intermediate state to walk to: the migrations are applied once at the
 top and every assertion reads the one state they produce. A test that needs to pop a migration to see what
 it is testing is a sign an alter has crept back in. The one exception is the seeded-`up` test, which pops
-the seed alone — the newest migration, so it always pops exactly `1` — drives it by hand with `SEED_DEMO`
-forced on, and re-applies it.
+the seed alone — no longer the newest migration, so the pop count is derived from how many migrations
+landed after it rather than assumed to be `1` — drives it by hand with `SEED_DEMO` forced on, and
+re-applies it.
 
 The four `shopOwner` table indexes additionally get their **key documents** asserted with `deepEqual`, not
 merely their names: key order carries the ESR ordering, and the trailing direction has to be uniform across
