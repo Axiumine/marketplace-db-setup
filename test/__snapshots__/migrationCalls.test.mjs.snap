@@ -637,6 +637,7 @@ exports[`20260301000200-create-company.js — up() and down() issue exactly thes
                   },
                   "publicName": {
                     "bsonType": "string",
+                    "minLength": 1,
                     "maxLength": 100,
                     "description": "the trading name shown to customers, not the registered legal name"
                   },

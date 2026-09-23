@@ -725,6 +725,10 @@ if (!URL) {
     assert.equal($jsonSchema.properties.uniqueCode.maxLength, 7, 'uniqueCode upper bound');
     assert.equal($jsonSchema.properties.certifiedEmail.maxLength, 250, 'certifiedEmail bound');
     assert.equal($jsonSchema.properties.registryExtract.maxLength, 1000, 'registryExtract is capped');
+    // B42: `publicName` mirrors `slug`'s lower bound (`minLength: 2`) with a bound of its own, so an
+    // empty string can never sit alongside `published: true` and pass as a card with a heading.
+    assert.equal($jsonSchema.properties.publicName.minLength, 1, 'publicName lower bound');
+    assert.equal($jsonSchema.properties.publicName.maxLength, 100, 'publicName upper bound');
 
     // `taxCode` is optional by omission from the required list above — the 11-character company
     // form, not the 16-character personal one.
@@ -798,6 +802,11 @@ if (!URL) {
 
     // A field the validator does not declare is refused outright, whatever it is called.
     await rejects('company', { ...validCompany(), firstName: 'Shop Sign' });
+
+    // B42: an empty publicName is refused on its own, independent of `published` — the property bound
+    // and the `$expr` linkability rule are two different guards over the same field.
+    await rejects('company', { ...validCompany(), publicName: '' });
+    await accepts('company', { ...validCompany(), publicName: 'S' });
   });
 
   test('company takes a deletion instant, and only a date', async () => {
@@ -921,6 +930,11 @@ if (!URL) {
     await rejects('company', { ...validCompany(), published: true, publicName: 'Shop' });
     await rejects('company', { ...validCompany(), published: true, slug: `shop-${uid()}` });
     await accepts('company', { ...validCompany(), published: true, publicName: 'Shop', slug: `shop-${uid()}` });
+
+    // B42: `$type` alone accepts an empty string, which is a published card with no heading — exactly
+    // what this rule exists to prevent. The property-level `minLength: 1` on `publicName` is what
+    // actually closes it; without it this line was accepted.
+    await rejects('company', { ...validCompany(), published: true, publicName: '', slug: `shop-${uid()}` });
 
     // The rule holds on the way in AND on the way through. An `$expr` in a collection validator runs
     // on every write, not only on insert — which is what makes it a constraint rather than a
