@@ -19,22 +19,64 @@ import { test } from 'vitest';
 // ⚠️ `require`, not `import`, for the reason spelled out in mongoUrl.test.mjs: scripts/seedKeygrip.js
 // pulls this file in through node's own loader, and two coverage reports for one path with mismatched
 // byte offsets lose ranges instead of merging.
-const { buildSeedKeys, keygripFingerprint, keygripHoldersKey, keygripKey, readKek, seedKeygripRecord, wrapKeygripKeys } = createRequire(
-  import.meta.url
-)('../lib/keygrip.js');
+const {
+  SEED_CREATE,
+  SEED_FORCE_CAS,
+  buildSeedKeys,
+  keygripFingerprint,
+  keygripHoldersKey,
+  keygripKey,
+  readKek,
+  seedKeygripRecord,
+  wrapKeygripKeys
+} = createRequire(import.meta.url)('../lib/keygrip.js');
 
 const KEK = randomBytes(32);
 const ENV = { REDIS_KEY: 'marketplaceDev:', KEYGRIP_KEK: KEK.toString('base64') };
 const NOW = new Date('2026-08-12T09:14:22.581Z');
 
-/** A hash that answers `hGetAll` and records `hSet`, which is the whole of what the store contract is. */
+// B58 — the write is a Lua script now, not a bare `hSet`, so the fake has to be a real enough Redis to
+// prove the point: `eval` re-checks its condition against the SAME `hash` a second, racing `eval` would
+// land on, exactly as the server-side script re-checks against the same key. A fake that just recorded the
+// call and always returned 1 would pass every test in this file whether or not the fix was real.
+/**
+ * A hash that answers `hGetAll`, and a store that runs exactly the two scripts `lib/keygrip.js` sends —
+ * matched by identity against its own exports, never re-typed here — against that one shared hash.
+ */
 function fakeStore(initial = {}) {
   const calls = [];
+  let hash = { ...initial };
 
   return {
     calls,
-    hGetAll: async () => initial,
-    hSet: async (key, value) => void calls.push({ key, value })
+    hGetAll: async () => ({ ...hash }),
+    async eval(script, { keys, arguments: args }) {
+      const [key] = keys;
+
+      if (script === SEED_CREATE) {
+        if (hash.wrapped && hash.version) return 0;
+
+        const value = { version: args[0], wrapped: args[1], fp: args[2] };
+
+        hash = { ...hash, ...value };
+        calls.push({ key, value });
+
+        return 1;
+      }
+
+      if (script === SEED_FORCE_CAS) {
+        if (hash.version !== args[0]) return 0;
+
+        const value = { version: args[1], wrapped: args[2], fp: args[3] };
+
+        hash = { ...hash, ...value };
+        calls.push({ key, value });
+
+        return 1;
+      }
+
+      throw new Error('fakeStore.eval received a script this test double does not recognize');
+    }
   };
 }
 
@@ -211,4 +253,95 @@ test('a bad KEK stops a write but not the report on an existing record', async (
   const result = await seedKeygripRecord(store, { env: { REDIS_KEY: 'marketplaceDev:' }, force: false, now: NOW });
 
   assert.equal(result.written, false);
+});
+
+// ⚠️ B58 — the two scripts, asserted on their literal text. `fakeStore` above routes on `script ===
+// SEED_CREATE`/`SEED_FORCE_CAS` by identity, so it would keep passing every other test in this file even
+// if the Lua text itself were weakened (an `and` flipped to `or`, a field dropped, the wrong ARGV index)
+// — these two are what would actually run against Redis, and are the only tests that look at it.
+test('SEED_CREATE refuses only when both wrapped and version are already there', () => {
+  assert.equal(
+    SEED_CREATE,
+    `if redis.call('HGET', KEYS[1], 'wrapped') and redis.call('HGET', KEYS[1], 'version') then return 0 end
+redis.call('HSET', KEYS[1], 'version', ARGV[1], 'wrapped', ARGV[2], 'fp', ARGV[3])
+return 1`
+  );
+});
+
+test('SEED_FORCE_CAS refuses once the stored version no longer matches what was read', () => {
+  assert.equal(
+    SEED_FORCE_CAS,
+    `if redis.call('HGET', KEYS[1], 'version') ~= ARGV[1] then return 0 end
+redis.call('HSET', KEYS[1], 'version', ARGV[2], 'wrapped', ARGV[3], 'fp', ARGV[4])
+return 1`
+  );
+});
+
+/** A store whose `eval` always reports a lost race, so the throw path is pinned to its exact wording
+ * without depending on real scheduling order — the concurrency itself is proved separately below. */
+function racedStore(initial = {}) {
+  return { hGetAll: async () => initial, eval: async () => 0 };
+}
+
+test('B58 — a lost race on a fresh seed fails loudly, naming the key, and never reports written', async () => {
+  await assert.rejects(
+    seedKeygripRecord(racedStore(), { env: ENV, force: false, now: NOW }),
+    /^Error: Lost the race on "marketplaceDev:keygrip": another process seeded the keygrip record first\. Nothing was written — re-run without --force to see what it wrote\.$/
+  );
+});
+
+test('B58 — a lost race on a --force seed fails loudly, naming the key, and never reports written', async () => {
+  await assert.rejects(
+    seedKeygripRecord(racedStore({ version: '4', wrapped: 'old', fp: 'abcdef012345' }), { env: ENV, force: true, now: NOW }),
+    /^Error: Lost the race on "marketplaceDev:keygrip": another process rewrote the keygrip record while this --force seed was preparing its write\. Nothing was written — re-run to see what it left before forcing again\.$/
+  );
+});
+
+// ⚠️ B58 itself — the bug this whole file is here to close. Before the fix, `seedKeygripRecord` read with
+// `hGetAll` and wrote with a bare `hSet` in two separate round trips, so two concurrent seed runs against
+// the same virgin Redis both read "no record" and both wrote — the second silently clobbering the first,
+// with no error and no way for either terminal to know it happened. This drives two real, concurrent
+// calls through the same `fakeStore` every other test in this file uses (not `racedStore`), so it fails
+// exactly the way the bug did if the atomic guard is ever removed.
+test('B58 — two concurrent fresh seeds on one virgin store: exactly one writes, the other loses loudly', async () => {
+  const store = fakeStore();
+
+  const [a, b] = await Promise.allSettled([
+    seedKeygripRecord(store, { env: ENV, force: false, now: NOW }),
+    seedKeygripRecord(store, { env: ENV, force: false, now: NOW })
+  ]);
+
+  const fulfilled = [a, b].filter((outcome) => outcome.status === 'fulfilled');
+  const rejected = [a, b].filter((outcome) => outcome.status === 'rejected');
+
+  assert.equal(fulfilled.length, 1, 'exactly one of the two concurrent runs must have written');
+  assert.equal(rejected.length, 1, 'the other must lose the race loudly, not silently succeed too');
+  assert.equal(fulfilled[0].value.written, true);
+  assert.equal(fulfilled[0].value.version, 1);
+  assert.match(rejected[0].reason.message, /^Lost the race on "marketplaceDev:keygrip"/);
+
+  // Only the winner's HSET ever reached the store — the loser's material was never written in behind it.
+  assert.equal(store.calls.length, 1);
+});
+
+test('B58 — two concurrent --force seeds against the same record: exactly one writes, the other loses loudly', async () => {
+  const store = fakeStore({ version: '4', wrapped: 'old', fp: 'abcdef012345' });
+
+  const [a, b] = await Promise.allSettled([
+    seedKeygripRecord(store, { env: ENV, force: true, now: NOW }),
+    seedKeygripRecord(store, { env: ENV, force: true, now: NOW })
+  ]);
+
+  const fulfilled = [a, b].filter((outcome) => outcome.status === 'fulfilled');
+  const rejected = [a, b].filter((outcome) => outcome.status === 'rejected');
+
+  assert.equal(fulfilled.length, 1);
+  assert.equal(rejected.length, 1);
+  assert.equal(fulfilled[0].value.written, true);
+  assert.equal(fulfilled[0].value.version, 5);
+  assert.match(rejected[0].reason.message, /preparing its write/);
+
+  // The version moved from 4 to 5 exactly once — twice would mean both writes landed, the bug this closes.
+  assert.equal(store.calls.length, 1);
+  assert.equal(store.calls[0].value.version, '5');
 });
