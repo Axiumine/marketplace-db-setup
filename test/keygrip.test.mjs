@@ -297,6 +297,19 @@ test('B58 — a lost race on a --force seed fails loudly, naming the key, and ne
   );
 });
 
+// The case the fresh-vs-fresh and force-vs-force messages above don't cover: a --force run that
+// stale-read no record (hasRecord=false, so it took SEED_CREATE) loses the race to a concurrent fresh
+// seed. The fresh-seed message ("re-run without --force") would be wrong advice for an admin who asked
+// for --force — nothing was overwritten, and re-running the same --force command is what actually works
+// next time, through SEED_FORCE_CAS. Both this message and the two above are asserted exactly, so this
+// case cannot silently fall back to either of the other two.
+test('B58 — a --force seed that stale-read no record and loses to a concurrent fresh seed gets its own message', async () => {
+  await assert.rejects(
+    seedKeygripRecord(racedStore(), { env: ENV, force: true, now: NOW }),
+    /^Error: Lost the race on "marketplaceDev:keygrip": another process seeded the keygrip record while this --force seed was starting\. Nothing was overwritten — re-run the same --force command and it will now replace it through the compare-and-set path\.$/
+  );
+});
+
 // ⚠️ B58 itself — the bug this whole file is here to close. Before the fix, `seedKeygripRecord` read with
 // `hGetAll` and wrote with a bare `hSet` in two separate round trips, so two concurrent seed runs against
 // the same virgin Redis both read "no record" and both wrote — the second silently clobbering the first,
