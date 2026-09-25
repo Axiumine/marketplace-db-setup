@@ -228,6 +228,10 @@ test('a forced write bumps the version rather than reusing it', async () => {
 
   assert.equal(result.written, true);
   assert.equal(result.version, 5);
+  // KEYS[1] on the SEED_FORCE_CAS eval must be the same record it just read — an empty KEYS array would
+  // still satisfy every assertion above (fakeStore's `hash` is shared, not keyed), so this is the one
+  // check that ties the write back to `key` instead of just to whichever hash happened to be mutated.
+  assert.equal(store.calls[0].key, 'marketplaceDev:keygrip');
   assert.equal(store.calls[0].value.version, '5');
   assert.deepEqual(unwrap(store.calls[0].value.wrapped, 5).length, 1);
 });
