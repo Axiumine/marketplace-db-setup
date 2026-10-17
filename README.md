@@ -145,7 +145,27 @@ unrebuildable database exists, that directory freezes.
 
 ## Licence and publication
 
-GPL-3.0-or-later — the full text is in [LICENSE](./LICENSE), and `package.json` declares the same SPDX id.
+GPL-3.0-or-later — see [LICENSE](./LICENSE), the unmodified text of the GNU General Public License,
+version 3, and `package.json` declares the same SPDX id. The copyright notice is below rather than in that
+file: GitHub's licence detector needs `LICENSE` to match the FSF's text closely, and a long header on it would
+drop the match below the detector's threshold
+([ADR-056](https://github.com/Axiumine/fullstack-marketplace-blueprint/blob/main/docs/devprotocol/phase3/adr/ADR-056-the-license-file-is-the-pristine-gpl-text.md)).
+
+marketplace database setup and migrations for <https://github.com/Axiumine/fullstack-marketplace-blueprint>
+
+Copyright (c) 2026 Giovanni Manzoni <dev@giovannimanzoni.com>
+
+This program is free software: you can redistribute it and/or modify it under the terms of the GNU
+General Public License as published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without
+even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+General Public License for more details.
+
+You should have received a copy of the GNU General Public License along with this program. If not,
+see <https://www.gnu.org/licenses/>.
+
 The remote is `https://github.com/Axiumine/marketplace-db-setup` and it is public. The history is a single
 commit by design: two operational runbooks under `setup/` used to be tracked and carried live credentials,
 so they were untracked and the commits holding earlier copies were collapsed into one. Those files are

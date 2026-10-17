@@ -20,19 +20,16 @@ image: jetbrains/qodana-js:2026.2
 
 # ── SCA: third-party license audit (Ultimate Plus) ────────────────────────────
 # Scans npm/Yarn deps and surfaces license conflicts as problems. The project is
-# proprietary (package.json "UNLICENSED"), so Qodana's default compatibility
-# matrix already flags copyleft dependencies. Tighten per-project below if needed.
+# GPL-3.0-or-later (LICENSE, package.json "license"), and Qodana checks every dependency
+# against that. Tighten per-project below if needed.
 raiseLicenseProblems: true
 
 # `keys` is THIS project's license, `allowed` the dependency licenses accepted
-# against it. The default matrix for a proprietary project flags every copyleft
-# dep as a Critical — correct for shipped software, wrong here: this is a
-# migration tool that runs on our own hosts against our own database, never
-# distributed, so the GPL's distribution trigger is never pulled.
+# against it.
 #
-# `keys` must carry the key Qodana derives, NOT the package.json string: it maps
-# "UNLICENSED" to PROPRIETARY-LICENSE, and the finding text says so verbatim.
-# Putting "UNLICENSED" here matches no project and the rule silently does nothing.
+# `keys` must carry the key Qodana derives from package.json "license", which is the SPDX
+# string itself (GPL-3.0-or-later). A key that matches no project makes the rule silently
+# do nothing.
 #
 # MPL-2.0 covers lightningcss, which arrives only as `vitest -> vite -> lightningcss`
 # (`yarn why lightningcss` confirms that single path, same as every other repo on this
