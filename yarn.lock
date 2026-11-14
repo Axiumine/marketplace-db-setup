@@ -1015,10 +1015,10 @@ diff-match-patch@1.0.5:
   resolved "https://registry.npmjs.org/diff-match-patch/-/diff-match-patch-1.0.5.tgz#abb584d5f10cd1196dfc55aa03701592ae3f7b37"
   integrity sha512-IayShXAgj/QMXgB0IWmKx+rOPuGMhqm5w6jvFxmVenXKIzRqTAAsbBPT3kWQeGANj3jGgvcvv4yK6SxqYmikgw==
 
-dotenv@^18.0.9:
-  version "18.0.9"
-  resolved "https://registry.yarnpkg.com/dotenv/-/dotenv-18.0.9.tgz#5c565760ce7e6fb69f9477ebcd1a3b64c766f9c8"
-  integrity sha512-3fVOW4cB02R066PUSwn8O4TJyz9NckQl7F81blIbaq9jKBm2tSmOKky7ZHIXzGvkVPXCSn6jkpziBPZdGFs8Tw==
+dotenv@^18.0.10:
+  version "18.0.10"
+  resolved "https://registry.yarnpkg.com/dotenv/-/dotenv-18.0.10.tgz#4171e67ba539a3d1513d7cbc51b8124e60714d28"
+  integrity sha512-89FAA1xchzK2mxVWdr5F/0rldwiueXs6zJM86rO66EzekR1iBdiXRthyG+m5GvkJaFH3C2LESzamTkgndmLT2A==
 
 dunder-proto@^1.0.1:
   version "1.0.1"
