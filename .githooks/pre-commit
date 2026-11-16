@@ -475,7 +475,7 @@ fi
 # whichever gate ran first, which sends the reader after the wrong thing.
 if ! command -v yarn > /dev/null 2>&1; then
 	gate_block 'yarn not found in PATH — both gates below shell out to it.' \
-		'corepack enable'
+		'npm install -g corepack@0.36.0 && corepack enable'
 fi
 
 # ── Gate 3 — the migration replay, gated at 100% coverage ────────────────────
