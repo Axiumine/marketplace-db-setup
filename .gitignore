@@ -2,6 +2,12 @@
 node_modules/
 .env
 
+# Yarn 4: local install state and cache. The project .yarnrc.yml is committed on purpose and
+# holds no credential; the negation keeps a global ignore of that name from hiding it.
+.yarn/
+.pnp.*
+!.yarnrc.yml
+
 # The two manual runbooks under setup/. They are working notes rather than project files: they carry
 # real database users, their passwords and the internal hostnames those live on, written out ready to
 # paste into a shell. Nothing in the repo reads them, so untracking costs nothing, and the remote is
