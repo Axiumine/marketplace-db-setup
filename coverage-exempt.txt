@@ -26,10 +26,6 @@ scripts/seedKeygrip.js
 # index and an lcov file to say anything about it.
 scripts/coverage-audit.mjs
 
-# A shell filter the lockfile gate runs. vitest has no runner for it, and what proves it works is
-# that gate going red on a lockfile carrying a registry it should not.
-scripts/lockfile-registry-filter.sh
-
 # Prose, not source. The README beside the shared `$jsonSchema` shapes, which those schemas point at
 # for the one judgement no program can make: which fields are personal (ADR-029).
 lib/schemas/README.md

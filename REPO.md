@@ -324,8 +324,9 @@ about the replay it saves: `qodana.sh` regenerates coverage as `yarn test:cov ||
 exit code, so taking the report from the blocking gate is what keeps a threshold failure loud.
 
 Ahead of the migration gate each hook selects node, reading `engines.node` from `package.json` and switching
-via nvm. That gate shells out to yarn and yarn's `engines` check is a hard exit 1, so without it a push from
-a shell on the machine default node dies *before* the gate, under the gate's own banner. Every repo's
+via nvm. Yarn 4 does not enforce `engines` (yarn classic's check was a hard exit 1, and nothing took over), so
+this selection is the only enforcement: without it a push from a shell on the machine default node runs the
+gate on the wrong runtime, and fails, if it fails, under the gate's own banner. Every repo's
 `pre-push` carries the same block; `pre-commit` here carries it too now — it used to skip it, correctly,
 while `qodana.sh` was the only thing it ran (the linter runs in a container and calls neither node nor
 yarn).
