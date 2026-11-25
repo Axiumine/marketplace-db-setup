@@ -58,8 +58,8 @@ it is an admin-run runbook, not application code.
 - **Never commit on `main`.** Branch first: `git switch -c <type>/<slug>`. Merging is the user's call.
 - **Push-on-request**, always.
 - Merged → `git branch -d <slug>` (never `-D`) in the same breath as the merge.
-- ⚠️ Nothing has been pushed to this public remote yet — before the first push, check that nothing beyond
-  migrations, validators and the `env` template is staged. Detail: [`REPO.md`](./REPO.md).
+- ⚠️ This remote is **public**: before a push, check that nothing secret is staged. Migrations, validators and
+  the `env` template are fine, nothing else should be assumed to be. Detail: [`REPO.md`](./REPO.md).
 
 ## Gates
 
