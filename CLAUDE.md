@@ -12,7 +12,6 @@ One of sixteen sub-repos.
 | scope, the six collections (diagram + field meanings), the demo seed, the three schema traps | [`README.md`](./README.md) |
 | prerequisites, test suites, gates/hooks, migrate-mongo state, file layout, migration-authoring rules, the full collection-by-collection schema reference | [`REPO.md`](./REPO.md) |
 | why a validator shape is the way it is | [`lib/schemas/README.md`](./lib/schemas/README.md) |
-| GitNexus rules and this repo's registry name | [`AGENTS.md`](./AGENTS.md) |
 | anything cross-repo | parent `CLAUDE.md` |
 
 Six collections — `admin`, `shopOwner`, `company`, `user`, `itemCategory`, `item`.
@@ -51,9 +50,6 @@ leak forges a session of any tier. Print its name, never its value.
 — no test spans the two repos, and a drift in the format shows up as a fleet that stops booting. Its
 header says what may not change alone. ⚠️ **Never wire `scripts/seedKeygrip.js` into a service's boot** —
 it is an admin-run runbook, not application code.
-
-- **Run `impact({target, repo})` before editing a symbol; run `detect_changes()` before committing.**
-  `repo:` is mandatory, always a `marketplace*` registry name.
 
 ## Version control
 
