@@ -5,7 +5,7 @@ collections, attach `$jsonSchema` validators, build indexes and optionally seed 
 [migrate-mongo](https://github.com/seppevs/migrate-mongo).
 
 **Read parent first** — [`../../CLAUDE.md`](https://github.com/Axiumine/fullstack-marketplace-blueprint/blob/main/CLAUDE.md)
-One of fifteen sub-repos.
+One of sixteen sub-repos.
 
 | Need | File |
 |---|---|
