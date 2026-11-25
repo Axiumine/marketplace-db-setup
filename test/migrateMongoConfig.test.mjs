@@ -91,6 +91,20 @@ test('it hands migrate-mongo the whole configuration, value for value', () => {
   });
 });
 
+test('it loads .env before it reads the environment', () => {
+  // Every other test stubs the variables first, so a dropped dotenv load would leave them all green
+  // while `yarn migrate:up` found nothing. The stand-in also keeps the real file unread.
+  const load = vi.spyOn(require('dotenv'), 'config').mockImplementation(() => {
+    vi.stubEnv('MONGO_DEV_DB', 'dbFromDotEnv');
+    return { parsed: {} };
+  });
+
+  const config = loadWith(FAKE);
+  load.mockRestore();
+
+  assert.equal(config.mongodb.databaseName, 'dbFromDotEnv');
+});
+
 test('the database name falls back to the authSource when MONGO_DEV_DB is unset', () => {
   // `MONGO_DEV_DB || MONGO_DEV_AUTH_ADMIN` — the fallback is not decoration. Every database in this
   // deployment authenticates against ITSELF rather than against `admin` (see CLAUDE.md, *Testing*),

@@ -5,14 +5,13 @@ collections, attach `$jsonSchema` validators, build indexes and optionally seed 
 [migrate-mongo](https://github.com/seppevs/migrate-mongo).
 
 **Read parent first** — [`../../CLAUDE.md`](https://github.com/Axiumine/fullstack-marketplace-blueprint/blob/main/CLAUDE.md)
-One of fifteen sub-repos.
+One of sixteen sub-repos.
 
 | Need | File |
 |---|---|
 | scope, the six collections (diagram + field meanings), the demo seed, the three schema traps | [`README.md`](./README.md) |
 | prerequisites, test suites, gates/hooks, migrate-mongo state, file layout, migration-authoring rules, the full collection-by-collection schema reference | [`REPO.md`](./REPO.md) |
 | why a validator shape is the way it is | [`lib/schemas/README.md`](./lib/schemas/README.md) |
-| GitNexus rules and this repo's registry name | [`AGENTS.md`](./AGENTS.md) |
 | anything cross-repo | parent `CLAUDE.md` |
 
 Six collections — `admin`, `shopOwner`, `company`, `user`, `itemCategory`, `item`.
@@ -52,9 +51,6 @@ leak forges a session of any tier. Print its name, never its value.
 header says what may not change alone. ⚠️ **Never wire `scripts/seedKeygrip.js` into a service's boot** —
 it is an admin-run runbook, not application code.
 
-- **Run `impact({target, repo})` before editing a symbol; run `detect_changes()` before committing.**
-  `repo:` is mandatory, always a `marketplace*` registry name.
-
 ## Version control
 
 **git**, branch `main`, remote `origin` → `https://github.com/Axiumine/marketplace-db-setup` (**public**).
@@ -62,8 +58,8 @@ it is an admin-run runbook, not application code.
 - **Never commit on `main`.** Branch first: `git switch -c <type>/<slug>`. Merging is the user's call.
 - **Push-on-request**, always.
 - Merged → `git branch -d <slug>` (never `-D`) in the same breath as the merge.
-- ⚠️ Nothing has been pushed to this public remote yet — before the first push, check that nothing beyond
-  migrations, validators and the `env` template is staged. Detail: [`REPO.md`](./REPO.md).
+- ⚠️ This remote is **public**: before a push, check that nothing secret is staged. Migrations, validators and
+  the `env` template are fine, nothing else should be assumed to be. Detail: [`REPO.md`](./REPO.md).
 
 ## Gates
 

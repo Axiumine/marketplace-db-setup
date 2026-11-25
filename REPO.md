@@ -754,9 +754,9 @@ mongoose getters never run and the raw driver value reaches GraphQL, where
   characters and one `=`), which no template placeholder has. Print its name, never its value.
 - Only a `Dev` environment is wired up (`MONGO_DEV_*`). There is no staging or prod config yet.
 
-## Version control — before the first push
+## Version control — the remote is public
 
-**git**, branch `main`, remote `origin` → `https://github.com/Axiumine/marketplace-db-setup` (**public**).
-The history is a single commit by design, so there is no second revision to leak from. Before the first
-push, read what a public reader would get: every migration, every validator and the `env` template are
-fine, and nothing else should be assumed to be.
+**git**, default branch `main`, remote `origin` → `https://github.com/Axiumine/marketplace-db-setup`
+(**public**). Whatever is committed is published, history included, so before a push read what a public
+reader would get: every migration, every validator and the `env` template are fine, and nothing else
+should be assumed to be.
